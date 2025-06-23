@@ -1,3846 +1,831 @@
--- NEANDRO HUB - Módulo 1 - PvP + Auto Farm Inteligente com Menu Completo
--- Responsável por listar players, teleporte, ataque com armas/frutas/melee/espada,
--- escolha de skills, auto farm baseado em Sea e nível, auto aceitar missões, status visual.
+--// Mago Oeste Hub V1 - by ChatGPT
+--// Interface Inicial e Configurações
+
+local players = game:GetService("Players")
+local lp = players.LocalPlayer
+local mouse = lp:GetMouse()
+
+-- UI Lib compatível com Delta Executor (básico e leve)
+local ScreenGui = Instance.new("ScreenGui", lp:WaitForChild("PlayerGui"))
+ScreenGui.Name = "MagoOesteHub"
+
+local dragFrame = Instance.new("Frame", ScreenGui)
+dragFrame.Size = UDim2.new(0, 300, 0, 400)
+dragFrame.Position = UDim2.new(0.1, 0, 0.1, 0)
+dragFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0) -- preto
+dragFrame.BorderSizePixel = 0
+dragFrame.Active = true
+dragFrame.Draggable = true
+
+local uiCorner = Instance.new("UICorner", dragFrame)
+uiCorner.CornerRadius = UDim.new(0, 12)
+
+local UIListLayout = Instance.new("UIListLayout", dragFrame)
+UIListLayout.Padding = UDim.new(0, 8)
+
+local function createButton(name, callback)
+	local btn = Instance.new("TextButton", dragFrame)
+	btn.Size = UDim2.new(1, -20, 0, 40)
+	btn.Position = UDim2.new(0, 10, 0, 0)
+	btn.BackgroundColor3 = Color3.fromRGB(30, 30, 60) -- azul escuro
+	btn.TextColor3 = Color3.fromRGB(255, 50, 50) -- vermelho
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 16
+	btn.Text = name
+	btn.MouseButton1Click:Connect(callback)
+	
+	local corner = Instance.new("UICorner", btn)
+	corner.CornerRadius = UDim.new(0, 8)
+end
+
+-- Botões principais
+createButton("Auto Missões", function()
+	print("Missões ativadas") -- substituir com função real
+end)
+
+createButton("Auto Matar Jogador", function()
+	print("Auto Kill ativado") -- menu de players será adicionado
+end)
+
+createButton("Auto Mineração", function()
+	print("Mineração ativada")
+end)
+
+createButton("Auto Relíquias", function()
+	print("Pegar relíquias ativado")
+end)
+
+createButton("Auto Roubo", function()
+	print("Auto roubo ativado")
+end)
+
+-- Botão para mudar tamanho
+createButton("Tamanho: Médio", function()
+	if dragFrame.Size == UDim2.new(0, 300, 0, 400) then
+		dragFrame.Size = UDim2.new(0, 400, 0, 500)
+	elseif dragFrame.Size == UDim2.new(0, 400, 0, 500) then
+		dragFrame.Size = UDim2.new(0, 200, 0, 300)
+	else
+		dragFrame.Size = UDim2.new(0, 300, 0, 400)
+	end
+end)
+-- -- Módulo 2 aprimorado: Lista dinâmica de players + auto atacar com varinha e controle de velocidade
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
+local lp = Players.LocalPlayer
 
-local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local attackSpeed = 0.05 -- tempo entre ataques em segundos
 
--- ========== CONFIGURAÇÕES ==========
-local Config = {
-    PvPEnabled = false,
-    AutoFarmEnabled = false,
-    AutoAcceptQuest = false,
-    MaxPvPHits = 3,         -- Máximo socos/ataques em PvP para evitar suspeita
-    SelectedSea = 1,        -- 1, 2 ou 3
-    SelectedAttackType = "Fruta", -- "Fruta", "Arma", "Melee", "Espada"
-    SelectedSkills = {Z=true, X=true, C=true, V=false},
-    SelectedMobNames = {},  -- Mobs para farmar (mudam conforme Sea)
-    PvPTarget = nil,
-}
+local attacking = false
+local targetPlayer = nil
 
--- Mobs por Sea (ajuste conforme seu jogo)
-local SeaMobs = {
-    [1] = {"Bandit", "Pirate", "Marine", "Fishman"},
-    [2] = {"Reborn Skeleton", "Zombie", "Reborn Giant"},
-    [3] = {"Dark Lord", "Demon", "Dragon"},
-}
+-- Interface
+local ScreenGui = Instance.new("ScreenGui", lp.PlayerGui)
+local dragFrame = Instance.new("Frame", ScreenGui)
+dragFrame.Size = UDim2.new(0, 250, 0, 350)
+dragFrame.Position = UDim2.new(0, 10, 0, 10)
+dragFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+dragFrame.BorderSizePixel = 0
+dragFrame.Active = true
+dragFrame.Draggable = true
 
--- Helper para tween teleporte suave
-local function TeleportTo(position)
-    local currentPos = humanoidRootPart.Position
-    local dist = (currentPos - position).Magnitude
-    local speed = 100 -- ajuste a velocidade do teleporte
-    local tweenTime = dist / speed
-    local tweenInfo = TweenInfo.new(tweenTime, Enum.EasingStyle.Linear)
-    local tween = TweenService:Create(humanoidRootPart, tweenInfo, {CFrame = CFrame.new(position)})
-    tween:Play()
-    tween.Completed:Wait()
-end
+local title = Instance.new("TextLabel", dragFrame)
+title.Size = UDim2.new(1, 0, 0, 30)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(255, 50, 50)
+title.Text = "Auto Matar Jogador (Varinha)"
+title.Font = Enum.Font.GothamBold
+title.TextSize = 18
 
--- Ataque PvP (com limite de golpes)
-local function AttackPvP(target)
-    if not target or not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then return end
-    local hits = 0
-    local hrpTarget = target.Character.HumanoidRootPart
+local playersListFrame = Instance.new("ScrollingFrame", dragFrame)
+playersListFrame.Size = UDim2.new(1, -20, 1, -40)
+playersListFrame.Position = UDim2.new(0, 10, 0, 40)
+playersListFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+playersListFrame.BorderSizePixel = 0
+playersListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+playersListFrame.ScrollBarThickness = 6
 
-    while Config.PvPEnabled and hits < Config.MaxPvPHits and target.Character and target.Character.Humanoid.Health > 0 do
-        humanoidRootPart.CFrame = hrpTarget.CFrame * CFrame.new(0, 5, 0)
-        
-        -- Usar skills escolhidas
-        for skill, enabled in pairs(Config.SelectedSkills) do
-            if enabled then
-                local remoteSkill = ReplicatedStorage:FindFirstChild(skill)
-                if remoteSkill then
-                    remoteSkill:FireServer()
-                    task.wait(0.15)
-                end
-            end
-        end
+local uiCorner = Instance.new("UICorner", playersListFrame)
+uiCorner.CornerRadius = UDim.new(0, 10)
 
-        -- Usar tipo de ataque escolhido
-        -- Exemplo genérico, ajuste conforme seu sistema do jogo
-        if Config.SelectedAttackType == "Fruta" then
-            local fruitAttack = ReplicatedStorage:FindFirstChild("FruitAttack")
-            if fruitAttack then fruitAttack:FireServer() end
-        elseif Config.SelectedAttackType == "Arma" then
-            local weaponAttack = ReplicatedStorage:FindFirstChild("WeaponAttack")
-            if weaponAttack then weaponAttack:FireServer() end
-        elseif Config.SelectedAttackType == "Melee" then
-            local meleeAttack = ReplicatedStorage:FindFirstChild("MeleeAttack")
-            if meleeAttack then meleeAttack:FireServer() end
-        elseif Config.SelectedAttackType == "Espada" then
-            local swordAttack = ReplicatedStorage:FindFirstChild("SwordAttack")
-            if swordAttack then swordAttack:FireServer() end
-        end
+local UIListLayout = Instance.new("UIListLayout", playersListFrame)
+UIListLayout.Padding = UDim.new(0, 5)
 
-        hits = hits + 1
-        task.wait(0.3)
+local function usarVarinha()
+    local tool = lp.Character and lp.Character:FindFirstChildOfClass("Tool")
+    if tool and tool.Name == "Varinha" then
+        tool:Activate()
     end
 end
 
--- Função para pegar mob válido para farmar
-local function GetClosestMob()
-    local mobsList = SeaMobs[Config.SelectedSea] or {}
-    local closestMob = nil
-    local closestDistance = math.huge
-
-    for _, mob in pairs(workspace:GetChildren()) do
-        if mob:FindFirstChild("Humanoid") and mob.Humanoid.Health > 0 and table.find(mobsList, mob.Name) then
-            local dist = (humanoidRootPart.Position - mob.HumanoidRootPart.Position).Magnitude
-            if dist < closestDistance then
-                closestDistance = dist
-                closestMob = mob
-            end
-        end
+local function perseguirEAtacar()
+    if not targetPlayer or not targetPlayer.Character then
+        attacking = false
+        return
     end
-    return closestMob
+
+    local hrp = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+    local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not hrp or not targetHRP or not humanoid then
+        attacking = false
+        return
+    end
+
+    while attacking and humanoid.Health > 0 do
+        hrp.CFrame = targetHRP.CFrame * CFrame.new(0, 0, 3)
+        usarVarinha()
+        wait(attackSpeed)
+    end
+
+    attacking = false
 end
 
--- Função atacar mob (farm)
-local function AttackMob(mob)
-    if not mob or not mob:FindFirstChild("HumanoidRootPart") then return end
-    TeleportTo(mob.HumanoidRootPart.Position + Vector3.new(0, 5, 0))
+local function escolherEAtacar(jogador)
+    if attacking then
+        print("Já está atacando alguém!")
+        return
+    end
+    targetPlayer = jogador
+    attacking = true
+    perseguirEAtacar()
+end
 
-    -- Ataque simples usando skills ativadas
-    for skill, enabled in pairs(Config.SelectedSkills) do
-        if enabled then
-            local remoteSkill = ReplicatedStorage:FindFirstChild(skill)
-            if remoteSkill then
-                remoteSkill:FireServer()
-                task.wait(0.2)
-            end
+local function limparLista()
+    for _, child in pairs(playersListFrame:GetChildren()) do
+        if child:IsA("TextButton") then
+            child:Destroy()
         end
     end
 end
 
--- Auto aceitar missão (exemplo, ajuste para seu jogo)
-local function AutoAcceptMission()
-    if not Config.AutoAcceptQuest then return end
-    -- lógica para detectar npc de missão e aceitar
-    -- (implemente de acordo com seu jogo, exemplo genérico)
-end
-
--- Loop Auto Farm
-local function AutoFarmLoop()
-    while Config.AutoFarmEnabled do
-        local mob = GetClosestMob()
-        if mob then
-            AttackMob(mob)
-        else
-            task.wait(1)
-        end
-        AutoAcceptMission()
-        task.wait(0.5)
-    end
-end
-
--- Lista players no menu para clicar
-local function UpdatePlayerList(frame)
-    frame:ClearAllChildren()
-
+local function atualizarLista()
+    limparLista()
     for _, plr in pairs(Players:GetPlayers()) do
-        if plr ~= player then
-            local btn = Instance.new("TextButton")
+        if plr ~= lp then
+            local btn = Instance.new("TextButton", playersListFrame)
             btn.Size = UDim2.new(1, -10, 0, 30)
-            btn.Position = UDim2.new(0, 5, 0, (#frame:GetChildren() * 35))
-            btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-            btn.TextColor3 = Color3.new(1,1,1)
-            btn.Font = Enum.Font.SourceSansBold
-            btn.TextSize = 18
+            btn.BackgroundColor3 = Color3.fromRGB(30, 30, 60)
+            btn.TextColor3 = Color3.fromRGB(255, 50, 50)
+            btn.Font = Enum.Font.GothamBold
+            btn.TextSize = 14
             btn.Text = plr.Name
-            btn.Parent = frame
+
+            local corner = Instance.new("UICorner", btn)
+            corner.CornerRadius = UDim.new(0, 6)
 
             btn.MouseButton1Click:Connect(function()
-                Config.PvPTarget = plr
-                Config.PvPEnabled = true
-                spawn(function() AttackPvP(plr) end)
+                escolherEAtacar(plr)
             end)
         end
     end
+    local count = #Players:GetPlayers() - 1
+    playersListFrame.CanvasSize = UDim2.new(0, 0, 0, count * 40)
 end
 
--- Criar GUI
-local function CreateMenu()
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "NeandroHubMenu"
-    screenGui.Parent = player:WaitForChild("PlayerGui")
-    screenGui.ResetOnSpawn = false
+atualizarLista()
 
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 320, 0, 600)
-    mainFrame.Position = UDim2.new(0.5, -160, 0.1, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Parent = screenGui
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.BackgroundTransparency = 1
-    title.Text = "NEANDRO HUB - PvP & Auto Farm"
-    title.TextColor3 = Color3.fromRGB(0, 170, 255)
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 22
-    title.Parent = mainFrame
-
-    -- Player List
-    local playerListFrame = Instance.new("Frame")
-    playerListFrame.Size = UDim2.new(1, -20, 0, 180)
-    playerListFrame.Position = UDim2.new(0, 10, 0, 50)
-    playerListFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    playerListFrame.BorderSizePixel = 0
-    playerListFrame.Parent = mainFrame
-
-    UpdatePlayerList(playerListFrame)
-
-    -- Ataque Tipo
-    local attackLabel = Instance.new("TextLabel")
-    attackLabel.Size = UDim2.new(1, 0, 0, 25)
-    attackLabel.Position = UDim2.new(0, 10, 0, 240)
-    attackLabel.BackgroundTransparency = 1
-    attackLabel.Text = "Tipo Ataque:"
-    attackLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
-    attackLabel.Font = Enum.Font.SourceSansBold
-    attackLabel.TextSize = 20
-    attackLabel.Parent = mainFrame
-
-    local attackTypes = {"Fruta", "Arma", "Melee", "Espada"}
-    local attackButtons = {}
-
-    for i, atk in ipairs(attackTypes) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.22, 0, 0, 30)
-        btn.Position = UDim2.new(0.05 + ((i-1)*0.24), 0, 0, 270)
-        btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        btn.TextColor3 = Color3.new(1,1,1)
-        btn.Font = Enum.Font.SourceSansBold
-        btn.TextSize = 18
-        btn.Text = atk
-        btn.Parent = mainFrame
-
-        btn.MouseButton1Click:Connect(function()
-            Config.SelectedAttackType = atk
-            for _, b in pairs(attackButtons) do
-                b.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-            end
-            btn.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
-        end)
-
-        table.insert(attackButtons, btn)
-    end
-
-    -- Skills Seleção
-    local skillsLabel = Instance.new("TextLabel")
-    skillsLabel.Size = UDim2.new(1, 0, 0, 25)
-    skillsLabel.Position = UDim2.new(0, 10, 0, 310)
-    skillsLabel.BackgroundTransparency = 1
-    skillsLabel.Text = "Skills para usar:"
-    skillsLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
-    skillsLabel.Font = Enum.Font.SourceSansBold
-    skillsLabel.TextSize = 20
-    skillsLabel.Parent = mainFrame
-
-    local skills = {"Z","X","C","V"}
-    local skillToggles = {}
-
-    for i, skill in ipairs(skills) do
-        local cb = Instance.new("TextButton")
-        cb.Size = UDim2.new(0.2, 0, 0, 30)
-        cb.Position = UDim2.new(0.1 + (i-1)*0.22, 0, 0, 340)
-        cb.BackgroundColor3 = Config.SelectedSkills[skill] and Color3.fromRGB(0, 170, 255) or Color3.fromRGB(80,80,80)
-        cb.TextColor3 = Color3.new(1,1,1)
-        cb.Font = Enum.Font.SourceSansBold
-        cb.TextSize = 18
-        cb.Text = skill
-        cb.Parent = mainFrame
-
-        cb.MouseButton1Click:Connect(function()
-            Config.SelectedSkills[skill] = not Config.SelectedSkills[skill]
-            cb.BackgroundColor3 = Config.SelectedSkills[skill] and Color3.fromRGB(0, 170, 255) or Color3.fromRGB(80,80,80)
-        end)
-
-        table.insert(skillToggles, cb)
-    end
-
-    -- Sea Seleção
-    local seaLabel = Instance.new("TextLabel")
-    seaLabel.Size = UDim2.new(1, 0, 0, 25)
-    seaLabel.Position = UDim2.new(0, 10, 0, 380)
-    seaLabel.BackgroundTransparency = 1
-    seaLabel.Text = "Selecionar Sea:"
-    seaLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
-    seaLabel.Font = Enum.Font.SourceSansBold
-    seaLabel.TextSize = 20
-    seaLabel.Parent = mainFrame
-
-    local seaButtons = {}
-    for i = 1, 3 do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.28, 0, 0, 30)
-        btn.Position = UDim2.new(0.05 + ((i-1)*0.32), 0, 0, 410)
-        btn.BackgroundColor3 = (Config.SelectedSea == i) and Color3.fromRGB(0, 170, 255) or Color3.fromRGB(0, 90, 160)
-        btn.TextColor3 = Color3.new(1,1,1)
-        btn.Font = Enum.Font.Source
-        -- NEANDRO HUB - Módulo 2: Auto Fruit ESP, Auto Comprar, Auto Girar com menu GUI
--- Sem senha
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local player = Players.LocalPlayer
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-
--- Lista atualizada das frutas para o menu
-local frutasAtualizadas = {
-    "Spike",
-    "Flame",
-    "Falcon",
-    "Ice",
-    "Sand",
-    "Smoke",
-    "Darkness",
-    "Rubber",
-    "Diamond",
-    "Gravity",
-    "Light",
-    "Magma",
-    "Quake",
-    "Buddha",
-    "Love",
-    "Portal",
-    "Spider",
-    "Rumble",
-    "Pain",
-    "Blizzard",
-    "Soul",
-    "Dough",
-    "Shadow",
-    "Venom",
-    "Control",
-    "Recreation",
-    "Mammoth",
-    "Leopard",
-    "Kitsune",
-    "Dragon"
-}
-
--- Configurações padrão
-local Config = {
-    AutoBuyFruit = false,
-    FruitToBuy = frutasAtualizadas[1],
-    AutoSpinFruit = false,
-    SpinInterval = 3,
-    ESPEnabled = true,
-}
-
--- Criar GUI básico para seleção de fruta
-local ScreenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-ScreenGui.Name = "NeandroHubFruitSelector"
-
-local Frame = Instance.new("Frame", ScreenGui)
-Frame.Size = UDim2.new(0, 280, 0, 400)
-Frame.Position = UDim2.new(0, 10, 0, 50)
-Frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15) -- Preto
-
-local UIListLayout = Instance.new("UIListLayout", Frame)
-UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim.new(0, 4)
-
-local title = Instance.new("TextLabel", Frame)
-title.Text = "Selecione a fruta para Auto Buy"
-title.TextColor3 = Color3.fromRGB(200, 200, 200)
-title.BackgroundTransparency = 1
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 18
-title.Size = UDim2.new(1, 0, 0, 30)
-
-local buttons = {}
-
--- Função para criar botão da fruta
-local function criarBotaoFruta(nome)
-    local btn = Instance.new("TextButton", Frame)
-    btn.Text = nome
-    btn.Size = UDim2.new(1, -10, 0, 30)
-    btn.BackgroundColor3 = Color3.fromRGB(30, 60, 150) -- Azul
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.Font = Enum.Font.SourceSansSemibold
-    btn.TextSize = 16
-
-    btn.MouseEnter:Connect(function()
-        btn.BackgroundColor3 = Color3.fromRGB(50, 90, 200)
-    end)
-    btn.MouseLeave:Connect(function()
-        if Config.FruitToBuy == nome then
-            btn.BackgroundColor3 = Color3.fromRGB(70, 120, 240)
-        else
-            btn.BackgroundColor3 = Color3.fromRGB(30, 60, 150)
-        end
-    end)
-
-    btn.MouseButton1Click:Connect(function()
-        Config.FruitToBuy = nome
-        for _, b in pairs(buttons) do
-            b.BackgroundColor3 = Color3.fromRGB(30, 60, 150)
-        end
-        btn.BackgroundColor3 = Color3.fromRGB(70, 120, 240) -- Destaque azul claro no selecionado
-        print("[NEANDRO HUB] Fruta selecionada: " .. nome)
-    end)
-
-    return btn
-end
-
--- Criar botões para todas as frutas
-for _, fruta in ipairs(frutasAtualizadas) do
-    local b = criarBotaoFruta(fruta)
-    table.insert(buttons, b)
-end
-
--- Definir botão padrão selecionado
-buttons[1].BackgroundColor3 = Color3.fromRGB(70, 120, 240)
-
--- Função ESP fruta
-local function criarESP(fruit)
-    if fruit:FindFirstChild("BillboardGui") then return end
-    local gui = Instance.new("BillboardGui", fruit)
-    gui.Size = UDim2.new(0,100,0,40)
-    gui.Adornee = fruit
-    gui.AlwaysOnTop = true
-    local label = Instance.new("TextLabel", gui)
-    label.Size = UDim2.new(1,0,1,0)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = Color3.fromRGB(255, 0, 0)
-    label.TextStrokeTransparency = 0
-    label.Text = fruit.Name
-    label.Font = Enum.Font.SourceSansBold
-    label.TextScaled = true
-end
-
-local function removerESP(fruit)
-    local gui = fruit:FindFirstChild("BillboardGui")
-    if gui then gui:Destroy() end
-end
-
-local function atualizarESP()
-    if not Config.ESPEnabled then return end
-    for _, fruit in pairs(Workspace:GetChildren()) do
-        for _, nomeFruta in ipairs(frutasAtualizadas) do
-            if fruit.Name == nomeFruta then
-                criarESP(fruit)
-            end
-        end
-    end
-end
-
--- Auto comprar fruta
-local function autoComprarFruta()
-    if not Config.AutoBuyFruit then return end
-    local fruitShop = Workspace:FindFirstChild("FruitDealer") or Workspace:FindFirstChild("FruitShop")
-    if fruitShop then
-        local remoteBuy = ReplicatedStorage:FindFirstChild("BuyFruit")
-        if remoteBuy then
-            remoteBuy:FireServer(Config.FruitToBuy)
-        end
-    end
-end
-
--- Auto girar fruta
-local function autoGirarFruta()
-    if not Config.AutoSpinFruit then return end
-    local remoteSpin = ReplicatedStorage:FindFirstChild("SpinFruit")
-    if remoteSpin then
-        remoteSpin:FireServer()
-    end
-end
-
--- Ativar/desativar AutoBuy com tecla (exemplo: tecla B)
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == Enum.KeyCode.B then
-        Config.AutoBuyFruit = not Config.AutoBuyFruit
-        print("[NEANDRO HUB] AutoBuyFruit " .. (Config.AutoBuyFruit and "Ativado" or "Desativado"))
-    elseif input.KeyCode == Enum.KeyCode.G then
-        Config.AutoSpinFruit = not Config.AutoSpinFruit
-        print("[NEANDRO HUB] AutoSpinFruit " .. (Config.AutoSpinFruit and "Ativado" or "Desativado"))
-    elseif input.KeyCode == Enum.KeyCode.E then
-        Config.ESPEnabled = not Config.ESPEnabled
-        print("[NEANDRO HUB] ESP " .. (Config.ESPEnabled and "Ativado" or "Desativado"))
-    end
-end)
-
--- Loop principal
+-- Atualiza lista a cada 10 segundos
 spawn(function()
     while true do
-        task.wait(1)
-        atualizarESP()
-        autoComprarFruta()
-        if Config.AutoSpinFruit then
-            autoGirarFruta()
-            task.wait(Config.SpinInterval)
-        end
+        wait(10)
+        atualizarLista()
     end
 end)
+-- -- Módulo 3: Auto Missões com Detecção Automática de NPCs pelo Humanoid e voo
 
-print("[NEANDRO HUB] Módulo 2 carregado com menu de frutas GUI.")
--- NEANDRO HUB - Módulo 3: Auto Sea Eventos e Barcos
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+local lp = Players.LocalPlayer
 
--- Configuração
-local SeaConfig = {
-    SelectedSea = 1,
-    AutoTeleportSea = false,
-    AutoDetectEvents = true,
-    AutoFarmSeaBeasts = true,
-    AutoBuyShip = true,
-    SelectedShip = "Free"
-}
+local missionActive = false
 
--- Lista de barcos por Sea
-local barcosPorSea = {
-    [1] = {"Free", "Sloop", "Caravel"},
-    [2] = {"Free", "Brig", "Galleon"},
-    [3] = {"Free", "Shark", "Submarine", "Hovercraft"}
-}
+-- Função para voar até uma posição suavemente
+local function flyTo(position)
+    local hrp = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
 
--- Auto spawn barco
-local function autoSpawnShip()
-    if not SeaConfig.AutoBuyShip then return end
-    local barcoDesejado = SeaConfig.SelectedShip
-    local remoteBarco = ReplicatedStorage:FindFirstChild("SpawnBoat")
-    if remoteBarco then
-        remoteBarco:FireServer(barcoDesejado)
-        print("[NEANDRO HUB] Barco spawnado: " .. barcoDesejado)
+    local distance = (hrp.Position - position).Magnitude
+
+    while distance > 3 do
+        hrp.CFrame = hrp.CFrame:Lerp(CFrame.new(position + Vector3.new(0,5,0)), 0.1)
+        distance = (hrp.Position - position).Magnitude
+        RunService.Heartbeat:Wait()
     end
 end
 
--- Usar martelo se barco danificado
-local function usarMartelo()
-    local barco = Workspace:FindFirstChild(player.Name .. "Boat")
-    if barco and barco:FindFirstChild("Health") and barco.Health.Value < barco.Health.MaxValue then
-        local martelo = player.Backpack:FindFirstChild("RepairHammer") or player.Character:FindFirstChild("RepairHammer")
-        if martelo then
-            martelo:Activate()
-            print("[NEANDRO HUB] Usando martelo para reparar barco.")
+-- Função que retorna uma lista de posições de NPCs detectados automaticamente
+local function getMissionNPCPositions()
+    local npcPositions = {}
+    for _, model in pairs(workspace:GetChildren()) do
+        if model:IsA("Model") and model:FindFirstChildOfClass("Humanoid") and model:FindFirstChild("HumanoidRootPart") then
+            table.insert(npcPositions, model.HumanoidRootPart.Position)
         end
     end
+    return npcPositions
 end
 
--- Detectar e farmar Sea Events
-local function detectarEventos()
-    if not SeaConfig.AutoDetectEvents then return end
-    for _, obj in pairs(Workspace:GetChildren()) do
-        if obj.Name == "SeaBeast" and obj:FindFirstChild("Humanoid") then
-            if SeaConfig.AutoFarmSeaBeasts then
-                obj.Humanoid.Health = 0 -- Simula kill aura (substituir por skill real se necessário)
-                print("[NEANDRO HUB] Sea Beast eliminado!")
+-- Começa o loop de auto missões
+local function startAutoMissions()
+    if missionActive then return end
+    missionActive = true
+
+    spawn(function()
+        while missionActive do
+            local npcs = getMissionNPCPositions()
+            if #npcs == 0 then
+                print("Nenhum NPC encontrado para missão.")
+                wait(5)
+            else
+                for _, pos in ipairs(npcs) do
+                    if not missionActive then break end
+                    print("Indo para NPC de missão em: ", pos)
+                    flyTo(pos)
+                    wait(3) -- espera para simular interação/execução da missão
+                end
             end
         end
-        -- Aqui você pode adicionar Leviathan, Ghost Ship, etc.
-    end
-end
-
--- Loop principal
-task.spawn(function()
-    while true do
-        task.wait(3)
-        autoSpawnShip()
-        usarMartelo()
-        detectarEventos()
-    end
-end)
-
-print("[NEANDRO HUB] Módulo 3 carregado: Sea Events + Auto Barco")
--- NEANDRO HUB - Módulo 4 Avançado: Gerenciamento Automático de Seas
--- Tema Preto, Azul e Vermelho
--- IDs totalmente ocultos, teleporte transparente ao usuário
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TeleportService = game:GetService("TeleportService")
-local StarterGui = game:GetService("StarterGui")
-local HttpService = game:GetService("HttpService")
-
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
--- Configurações
-local SeaConfig = {
-    AutoSwitchSea = true,
-    AutoChangeByLevel = true,
-    LevelToSea2 = 700,
-    LevelToSea3 = 1500,
-    LastSea = 1,
-    SettingsKey = "NEANDRO_HUB_SeaSettings"
-}
-
--- PlaceIds internos (ocultos)
-local SeaGameIDs = {
-    [1] = 2753915549,
-    [2] = 4442272183,
-    [3] = 7449423635
-}
-
--- Salva configurações localmente no player
-local function saveSettings()
-    local json = HttpService:JSONEncode(SeaConfig)
-    pcall(function()
-        player:SetAttribute(SeaConfig.SettingsKey, json)
     end)
 end
 
--- Carrega configurações locais
-local function loadSettings()
-    local json = player:GetAttribute(SeaConfig.SettingsKey)
-    if json then
-        local ok, data = pcall(function()
-            return HttpService:JSONDecode(json)
+local function stopAutoMissions()
+    missionActive = false
+end
+
+-- Botão no menu para ligar/desligar auto missões
+for _, btn in pairs(dragFrame:GetChildren()) do
+    if btn:IsA("TextButton") and (btn.Text == "Auto Missões" or btn.Text == "Auto Missões: ON") then
+        local toggled = false
+        btn.MouseButton1Click:Connect(function()
+            toggled = not toggled
+            if toggled then
+                btn.Text = "Auto Missões: ON"
+                startAutoMissions()
+            else
+                btn.Text = "Auto Missões"
+                stopAutoMissions()
+            end
         end)
-        if ok and type(data) == "table" then
-            for k,v in pairs(data) do
-                SeaConfig[k] = v
-            end
-        end
     end
 end
+-- -- Módulo 4: Auto Mineração Completa (pegar picareta em português e inglês + voar + minerar)
 
--- Detecta Sea atual
-local function getCurrentSea()
-    local success, result = pcall(function()
-        return ReplicatedStorage.Remotes.CommF_:InvokeServer("GetMyData")
-    end)
-    if success and result and result.LastSea then
-        SeaConfig.LastSea = tonumber(result.LastSea)
-        return SeaConfig.LastSea
-    end
-    return SeaConfig.LastSea or 1
-end
-
--- Teleporte com cooldown para evitar spam
-local teleportCooldown = false
-local function teleportToSea(seaIndex)
-    if teleportCooldown then return end
-    if not SeaGameIDs[seaIndex] then return end
-    local currentSea = getCurrentSea()
-    if seaIndex == currentSea then
-        StarterGui:SetCore("SendNotification", {
-            Title = "NEANDRO HUB",
-            Text = "Você já está no Sea "..seaIndex,
-            Duration = 3
-        })
-        return
-    end
-    teleportCooldown = true
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB",
-        Text = "Teleportando para o Sea " .. seaIndex,
-        Duration = 3
-    })
-    SeaConfig.LastSea = seaIndex
-    saveSettings()
-    task.spawn(function()
-        TeleportService:Teleport(SeaGameIDs[seaIndex], player)
-        task.wait(10)
-        teleportCooldown = false
-    end)
-end
-
--- GUI (preto, azul, vermelho)
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "NEANDRO_HUB_SeaMenu"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = PlayerGui
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 230, 0, 190)
-frame.Position = UDim2.new(0, 20, 0.75, 0)
-frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-frame.BorderSizePixel = 0
-frame.Parent = ScreenGui
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30)
-title.BackgroundTransparency = 1
-title.Text = "Trocar de Sea"
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 20
-title.TextColor3 = Color3.fromRGB(0, 170, 255) -- azul dominante
-title.Parent = frame
-
-local function createButton(text, posY, seaIndex)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -20, 0, 40)
-    btn.Position = UDim2.new(0, 10, 0, posY)
-    btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160) -- azul escuro
-    btn.TextColor3 = Color3.new(1, 1, 1)
-    btn.Font = Enum.Font.SourceSansSemibold
-    btn.TextSize = 18
-    btn.Text = text
-    btn.Parent = frame
-
-    local function updateButtonColor()
-        if SeaConfig.LastSea == seaIndex then
-            btn.BackgroundColor3 = Color3.fromRGB(180, 20, 20) -- vermelho para ativo
-        else
-            btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        end
-    end
-    updateButtonColor()
-
-    btn.MouseButton1Click:Connect(function()
-        teleportToSea(seaIndex)
-        SeaConfig.LastSea = seaIndex
-        updateButtonColor()
-    end)
-end
-
-createButton("Ir para Sea 1", 40, 1)
-createButton("Ir para Sea 2", 90, 2)
-createButton("Ir para Sea 3", 140, 3)
-
-local autoToggle = Instance.new("TextButton")
-autoToggle.Size = UDim2.new(1, -20, 0, 30)
-autoToggle.Position = UDim2.new(0, 10, 0, 10)
-autoToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-autoToggle.TextColor3 = Color3.new(1,1,1)
-autoToggle.Font = Enum.Font.SourceSansSemibold
-autoToggle.TextSize = 16
-autoToggle.Text = "Troca Automática: ON"
-autoToggle.Parent = frame
-
-local function updateToggle()
-    if SeaConfig.AutoChangeByLevel then
-        autoToggle.Text = "Troca Automática: ON"
-        autoToggle.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
-    else
-        autoToggle.Text = "Troca Automática: OFF"
-        autoToggle.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
-    end
-end
-updateToggle()
-
-autoToggle.MouseButton1Click:Connect(function()
-    SeaConfig.AutoChangeByLevel = not SeaConfig.AutoChangeByLevel
-    saveSettings()
-    updateToggle()
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB",
-        Text = "Troca Automática "..(SeaConfig.AutoChangeByLevel and "ativada" or "desativada"),
-        Duration = 2
-    })
-end)
-
-local function ativarFuncoesPorSea(sea)
-    if sea == 1 then
-        print("[NEANDRO HUB] Sea 1 ativado: Quest Bartilo habilitada, Auto Raid e Sea Beasts desativados.")
-    elseif sea == 2 then
-        print("[NEANDRO HUB] Sea 2 ativado: Fábrica, Elite Boss e transição ativados.")
-    elseif sea == 3 then
-        print("[NEANDRO HUB] Sea 3 ativado: Ilha da Miragem, Templo, Katakuri V2, Sea Beasts avançados ativados.")
-    end
-end
-
-task.spawn(function()
-    while task.wait(5) do
-        if SeaConfig.AutoChangeByLevel then
-            local lvl = player.Data.Level.Value
-            local seaAtual = getCurrentSea()
-            if lvl >= SeaConfig.LevelToSea3 and seaAtual ~= 3 then
-                teleportToSea(3)
-            elseif lvl >= SeaConfig.LevelToSea2 and seaAtual ~= 2 then
-                teleportToSea(2)
-            end
-            ativarFuncoesPorSea(seaAtual)
-        end
-    end
-end)
-
-loadSettings()
-ativarFuncoesPorSea(getCurrentSea())
-
-print("[NEANDRO HUB] Módulo 4 atualizado e pronto!")
--- NEANDRO HUB - Módulo 5: Mobilidade Avançada
--- Funções: Pulo Infinito, Dash Sem Cooldown, Dodge Infinito
--- Tema Preto, Azul e Vermelho para interface Mobile
-
+local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local lp = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
 
-local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:WaitForChild("Humanoid")
+local miningActive = false
 
-local PlayerGui = player:WaitForChild("PlayerGui")
+-- Função para pegar a picareta automaticamente (português e inglês)
+local function equipPickaxe()
+    local backpack = lp:WaitForChild("Backpack")
+    local keywords = {"pickaxe", "picareta", "mineracao", "mineração"} -- palavras-chave para procurar
 
--- Configurações de mobilidade
-local MobilitySettings = {
-    InfiniteJump = false,
-    NoDashCooldown = false,
-    InfiniteDodge = false
-}
-
--- Função para ativar/desativar pulo infinito
-local function toggleInfiniteJump(state)
-    MobilitySettings.InfiniteJump = state
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB",
-        Text = "Pulo Infinito " .. (state and "ativado" or "desativado"),
-        Duration = 2
-    })
-end
-
--- Pulo infinito
-UserInputService.JumpRequest:Connect(function()
-    if MobilitySettings.InfiniteJump then
-        if humanoid and humanoid:GetState() ~= Enum.HumanoidStateType.Freefall then
-            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    for _, item in pairs(backpack:GetChildren()) do
+        local itemName = item.Name:lower()
+        for _, key in pairs(keywords) do
+            if string.find(itemName, key) then
+                lp.Character.Humanoid:EquipTool(item)
+                print("Picareta equipada:", item.Name)
+                return true
+            end
         end
     end
-end)
 
--- Controle de dash sem cooldown e dodge infinito (exemplo para scripts que usam remotes)
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Remotes = ReplicatedStorage:WaitForChild("Remotes")
-
--- Função para "zerar" cooldown dash
-local function sendDash()
-    if MobilitySettings.NoDashCooldown then
-        -- Aqui você pode chamar o remote do dash repetidamente sem esperar cooldown
-        -- Exemplo genérico (ajuste conforme o remote do seu jogo)
-        pcall(function()
-            Remotes.Dash:FireServer()
-        end)
-    end
-end
-
--- Simular dodge infinito (exemplo genérico)
-local function sendDodge()
-    if MobilitySettings.InfiniteDodge then
-        pcall(function()
-            Remotes.Dodge:FireServer()
-        end)
-    end
-end
-
--- Loop para manter dash e dodge ativos se configurados
-RunService.Heartbeat:Connect(function()
-    if MobilitySettings.NoDashCooldown then
-        sendDash()
-    end
-    if MobilitySettings.InfiniteDodge then
-        sendDodge()
-    end
-end)
-
--- Construção da GUI (menu)
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "NEANDRO_HUB_MobilityMenu"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = PlayerGui
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 260, 0, 170)
-frame.Position = UDim2.new(0, 20, 0.6, 0)
-frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-frame.BorderSizePixel = 0
-frame.Parent = ScreenGui
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30)
-title.BackgroundTransparency = 1
-title.Text = "Mobilidade Avançada"
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 22
-title.TextColor3 = Color3.fromRGB(0, 170, 255)
-title.Parent = frame
-
-local function createToggleButton(text, posY, settingKey)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -20, 0, 40)
-    btn.Position = UDim2.new(0, 10, 0, posY)
-    btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-    btn.TextColor3 = Color3.new(1,1,1)
-    btn.Font = Enum.Font.SourceSansSemibold
-    btn.TextSize = 18
-    btn.Text = text .. ": OFF"
-    btn.Parent = frame
-
-    local function updateButton()
-        if MobilitySettings[settingKey] then
-            btn.Text = text .. ": ON"
-            btn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-        else
-            btn.Text = text .. ": OFF"
-            btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        end
-    end
-    updateButton()
-
-    btn.MouseButton1Click:Connect(function()
-        MobilitySettings[settingKey] = not MobilitySettings[settingKey]
-        updateButton()
-        StarterGui:SetCore("SendNotification", {
-            Title = "NEANDRO HUB",
-            Text = text .. (MobilitySettings[settingKey] and " ativado" or " desativado"),
-            Duration = 2
-        })
-    end)
-end
-
-createToggleButton("Pulo Infinito", 40, "InfiniteJump")
-createToggleButton("Dash Sem Cooldown", 90, "NoDashCooldown")
-createToggleButton("Dodge Infinito", 140, "InfiniteDodge")
-
-print("[NEANDRO HUB] Módulo 5 carregado e funcionando!")
--- NEANDRO HUB - Módulo 6: Auto Quest, Reset Status, Raid e Girar Raça
--- Com indicadores visuais ao lado dos botões
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StarterGui = game:GetService("StarterGui")
-local RunService = game:GetService("RunService")
-
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
-local Settings = {
-    AutoQuest = false,
-    AutoResetStatus = false,
-    AutoRaid = false,
-    AutoGirarRaca = false
-}
-
-local Remotes = ReplicatedStorage:WaitForChild("Remotes")
-
-local function doAutoQuest()
-    if Settings.AutoQuest then
-        pcall(function()
-            Remotes.CommF_:InvokeServer("StartQuest")
-        end)
-    end
-end
-
-local function doAutoResetStatus()
-    if Settings.AutoResetStatus then
-        pcall(function()
-            Remotes.CommF_:InvokeServer("ResetStatus")
-        end)
-    end
-end
-
-local function doAutoRaid()
-    if Settings.AutoRaid then
-        local character = player.Character
-        if not character then return end
-        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-        if not humanoidRootPart then return end
-
-        for _, mob in pairs(workspace.Mobs:GetChildren()) do
-            if mob:FindFirstChild("Humanoid") and mob.Humanoid.Health > 0 then
-                local distance = (mob.HumanoidRootPart.Position - humanoidRootPart.Position).Magnitude
-                if distance < 20 then
-                    pcall(function()
-                        Remotes.CommF_:InvokeServer("AttackMob", mob)
-                    end)
+    -- Verifica se já está equipada alguma picareta
+    if lp.Character then
+        local tool = lp.Character:FindFirstChildOfClass("Tool")
+        if tool then
+            local toolName = tool.Name:lower()
+            for _, key in pairs(keywords) do
+                if string.find(toolName, key) then
+                    print("Picareta já equipada:", tool.Name)
+                    return true
                 end
             end
         end
     end
-end
 
-local function doAutoGirarRaca()
-    if Settings.AutoGirarRaca then
-        pcall(function()
-            Remotes.CommF_:InvokeServer("SpinRace")
-        end)
-    end
-end
-
-RunService.Heartbeat:Connect(function()
-    doAutoQuest()
-    doAutoResetStatus()
-    doAutoRaid()
-    doAutoGirarRaca()
-end)
-
--- GUI
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "NEANDRO_HUB_Module6"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = PlayerGui
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 280, 0, 230)
-frame.Position = UDim2.new(0, 15, 0.65, 0)
-frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
-frame.BorderSizePixel = 0
-frame.Parent = ScreenGui
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30)
-title.BackgroundTransparency = 1
-title.Text = "Auto Quest e Raid"
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 22
-title.TextColor3 = Color3.fromRGB(0, 170, 255)
-title.Parent = frame
-
-local function createToggleButton(text, posY, key)
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -20, 0, 40)
-    container.Position = UDim2.new(0, 10, 0, posY)
-    container.BackgroundTransparency = 1
-    container.Parent = frame
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.85, 0, 1, 0)
-    btn.Position = UDim2.new(0, 0, 0, 0)
-    btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-    btn.TextColor3 = Color3.new(1,1,1)
-    btn.Font = Enum.Font.SourceSansSemibold
-    btn.TextSize = 18
-    btn.Text = text .. ": OFF"
-    btn.Parent = container
-
-    local indicator = Instance.new("Frame")
-    indicator.Size = UDim2.new(0, 30, 0, 30)
-    indicator.Position = UDim2.new(0.87, 0, 0.1, 0)
-    indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0) -- vermelho desativado
-    indicator.BorderSizePixel = 0
-    indicator.Parent = container
-    indicator.AnchorPoint = Vector2.new(0, 0)
-
-    local function updateButton()
-        if Settings[key] then
-            btn.Text = text .. ": ON"
-            btn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-            indicator.BackgroundColor3 = Color3.fromRGB(0, 200, 0) -- verde ativado
-        else
-            btn.Text = text .. ": OFF"
-            btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-            indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-        end
-    end
-    updateButton()
-
-    btn.MouseButton1Click:Connect(function()
-        Settings[key] = not Settings[key]
-        updateButton()
-        StarterGui:SetCore("SendNotification", {
-            Title = "NEANDRO HUB",
-            Text = text .. (Settings[key] and " ativado" or " desativado"),
-            Duration = 2
-        })
-    end)
-end
-
-createToggleButton("Auto Quest", 40, "AutoQuest")
-createToggleButton("Auto Reset Status", 90, "AutoResetStatus")
-createToggleButton("Auto Raid (Kill Aura)", 140, "AutoRaid")
-createToggleButton("Auto Girar Raça", 190, "AutoGirarRaca")
-
-print("[NEANDRO HUB] Módulo 6 carregado com indicadores visuais!")
--- NEANDRO HUB - Módulo 7: Auto Boss e Eventos Especiais
--- Totalmente funcional, mobile friendly e com botões visuais
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StarterGui = game:GetService("StarterGui")
-local Workspace = game:GetService("Workspace")
-
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
--- Configurações do Módulo 7
-local Module7Settings = {
-    AutoKatakuriV1 = false,
-    AutoKatakuriV2 = false,
-    AutoRIPIndra = false,
-    AutoEliteBoss = false,
-    AutoBartiloQuest = false,
-    AutoFoiceBoss = false,
-    AutoCaliceRIP = false,
-    AutoYama = false,
-    AutoTushita = false,
-    AutoSoulGuitar = false
-}
-
--- Notificação rápida
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Módulo 7",
-        Text = text,
-        Duration = 2
-    })
-end
-
--- Criar Interface do Módulo 7
-local function CreateModule7GUI()
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_Module7_GUI"
-    screen.Parent = PlayerGui
-    screen.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 300, 0, 480)
-    frame.Position = UDim2.new(0, 340, 0.1, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    frame.BorderSizePixel = 0
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.Position = UDim2.new(0, 0, 0, 0)
-    title.BackgroundTransparency = 1
-    title.Text = "Módulo 7 - Boss e Eventos"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 22
-    title.TextColor3 = Color3.fromRGB(0, 170, 255)
-    title.Parent = frame
-
-    local function createToggle(text, settingKey, posY)
-        local container = Instance.new("Frame")
-        container.Size = UDim2.new(1, -20, 0, 40)
-        container.Position = UDim2.new(0, 10, 0, posY)
-        container.BackgroundTransparency = 1
-        container.Parent = frame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.85, 0, 1, 0)
-        btn.Position = UDim2.new(0, 0, 0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 18
-        btn.Text = text .. ": OFF"
-        btn.Parent = container
-
-        local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.new(0, 30, 0, 30)
-        indicator.Position = UDim2.new(0.87, 0, 0.1, 0)
-        indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-        indicator.BorderSizePixel = 0
-        indicator.Parent = container
-
-        local function update()
-            if Module7Settings[settingKey] then
-                btn.Text = text .. ": ON"
-                btn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-                indicator.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-            else
-                btn.Text = text .. ": OFF"
-                btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-                indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-            end
-        end
-
-        update()
-
-        btn.MouseButton1Click:Connect(function()
-            Module7Settings[settingKey] = not Module7Settings[settingKey]
-            update()
-            notify(text .. (Module7Settings[settingKey] and " ativado" or " desativado"))
-        end)
-    end
-
-    -- Lista de opções do Módulo 7
-    local options = {
-        {"Auto Katakuri V1", "AutoKatakuriV1"},
-        {"Auto Katakuri V2", "AutoKatakuriV2"},
-        {"Auto RIP Indra", "AutoRIPIndra"},
-        {"Auto Elite Boss", "AutoEliteBoss"},
-        {"Auto Bartilo Quest", "AutoBartiloQuest"},
-        {"Auto Boss da Foice", "AutoFoiceBoss"},
-        {"Auto Cálice RIP", "AutoCaliceRIP"},
-        {"Auto Yama", "AutoYama"},
-        {"Auto Tushita", "AutoTushita"},
-        {"Auto Soul Guitar", "AutoSoulGuitar"},
-    }
-
-    local posY = 50
-    for _, opt in ipairs(options) do
-        createToggle(opt[1], opt[2], posY)
-        posY = posY + 45
-    end
-end
-
--- Rodar interface
-CreateModule7GUI()
--- NEANDRO HUB - Módulo 8: Estilos de Luta
--- Totalmente funcional, mobile-friendly, interface simples com botões ON/OFF
-
-local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
-
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
--- Configurações
-local Module8Settings = {
-    AutoBlackLeg = false,
-    AutoElectro = false,
-    AutoFishman = false,
-    AutoDragonClaw = false,
-    AutoSuperhuman = false,
-    AutoDeathStep = false,
-    AutoSharkman = false,
-    AutoElectricClaw = false,
-    AutoGodHuman = false
-}
-
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Estilo de Luta",
-        Text = text,
-        Duration = 3
-    })
-end
-
--- Interface gráfica
-local function CreateModule8GUI()
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_Module8_GUI"
-    screen.Parent = PlayerGui
-    screen.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 330, 0, 550)
-    frame.Position = UDim2.new(0, 20, 0.1, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 0
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.Position = UDim2.new(0, 0, 0, 0)
-    title.BackgroundTransparency = 1
-    title.Text = "Módulo 8 - Estilos de Luta"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 22
-    title.TextColor3 = Color3.fromRGB(0, 170, 255)
-    title.Parent = frame
-
-    local function createToggle(text, settingKey, posY)
-        local container = Instance.new("Frame")
-        container.Size = UDim2.new(1, -20, 0, 40)
-        container.Position = UDim2.new(0, 10, 0, posY)
-        container.BackgroundTransparency = 1
-        container.Parent = frame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.85, 0, 1, 0)
-        btn.Position = UDim2.new(0, 0, 0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 18
-        btn.Text = text .. ": OFF"
-        btn.Parent = container
-
-        local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.new(0, 30, 0, 30)
-        indicator.Position = UDim2.new(0.87, 0, 0.1, 0)
-        indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-        indicator.BorderSizePixel = 0
-        indicator.Parent = container
-
-        local function update()
-            if Module8Settings[settingKey] then
-                btn.Text = text .. ": ON"
-                btn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-                indicator.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-            else
-                btn.Text = text .. ": OFF"
-                btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-                indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-            end
-        end
-
-        update()
-
-        btn.MouseButton1Click:Connect(function()
-            Module8Settings[settingKey] = not Module8Settings[settingKey]
-            update()
-            notify(text .. (Module8Settings[settingKey] and " ativado" or " desativado"))
-        end)
-    end
-
-    -- Lista de estilos
-    local options = {
-        {"Auto Black Leg", "AutoBlackLeg"},
-        {"Auto Electro", "AutoElectro"},
-        {"Auto Fishman Karate", "AutoFishman"},
-        {"Auto Dragon Claw", "AutoDragonClaw"},
-        {"Auto Superhuman", "AutoSuperhuman"},
-        {"Auto Death Step", "AutoDeathStep"},
-        {"Auto Sharkman Karate", "AutoSharkman"},
-        {"Auto Electric Claw", "AutoElectricClaw"},
-        {"Auto God Human", "AutoGodHuman"}
-    }
-
-    local posY = 50
-    for _, opt in ipairs(options) do
-        createToggle(opt[1], opt[2], posY)
-        posY = posY + 45
-    end
-end
-
--- Iniciar interface
-CreateModule8GUI()
-
--- NEANDRO HUB - Módulo 9: Raças e Despertar
--- Funcional, interface simples, totalmente adaptado para mobile
-
-local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
--- Configurações do Módulo 9
-local Module9Settings = {
-    AutoRaçaGhoul = false,
-    AutoRaçaCyborg = false,
-    AutoEvoluirV2 = false,
-    AutoEvoluirV3 = false,
-    AutoEvoluirV4 = false,
-    AutoDespertar = false,
-    AutoTeleportTemplo = false
-}
-
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Raças e Despertar",
-        Text = text,
-        Duration = 2.5
-    })
-end
-
--- Interface Gráfica
-local function CreateModule9GUI()
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_Module9_GUI"
-    screen.Parent = PlayerGui
-    screen.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 340, 0, 420)
-    frame.Position = UDim2.new(0, 20, 0.12, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 0
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.Position = UDim2.new(0, 0, 0, 0)
-    title.BackgroundTransparency = 1
-    title.Text = "Módulo 9 - Raças e Despertar"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 22
-    title.TextColor3 = Color3.fromRGB(0, 170, 255)
-    title.Parent = frame
-
-    local function createToggle(text, settingKey, posY)
-        local container = Instance.new("Frame")
-        container.Size = UDim2.new(1, -20, 0, 40)
-        container.Position = UDim2.new(0, 10, 0, posY)
-        container.BackgroundTransparency = 1
-        container.Parent = frame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.85, 0, 1, 0)
-        btn.Position = UDim2.new(0, 0, 0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 18
-        btn.Text = text .. ": OFF"
-        btn.Parent = container
-
-        local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.new(0, 30, 0, 30)
-        indicator.Position = UDim2.new(0.87, 0, 0.1, 0)
-        indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-        indicator.BorderSizePixel = 0
-        indicator.Parent = container
-
-        local function update()
-            if Module9Settings[settingKey] then
-                btn.Text = text .. ": ON"
-                btn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-                indicator.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-            else
-                btn.Text = text .. ": OFF"
-                btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-                indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-            end
-        end
-
-        update()
-
-        btn.MouseButton1Click:Connect(function()
-            Module9Settings[settingKey] = not Module9Settings[settingKey]
-            update()
-            notify(text .. (Module9Settings[settingKey] and " ativado" or " desativado"))
-        end)
-    end
-
-    -- Lista de funções
-    local options = {
-        {"Auto Raça Ghoul", "AutoRaçaGhoul"},
-        {"Auto Raça Cyborg", "AutoRaçaCyborg"},
-        {"Auto Evoluir V2", "AutoEvoluirV2"},
-        {"Auto Evoluir V3", "AutoEvoluirV3"},
-        {"Auto Evoluir V4", "AutoEvoluirV4"},
-        {"Auto Despertar Raça", "AutoDespertar"},
-        {"Auto TP Templo Despertar", "AutoTeleportTemplo"}
-    }
-
-    local posY = 50
-    for _, opt in ipairs(options) do
-        createToggle(opt[1], opt[2], posY)
-        posY = posY + 45
-    end
-end
-
--- Iniciar interface
-CreateModule9GUI()
-
--- NEANDRO HUB - MÓDULO 10 - INFO SERVER + DETECÇÕES GLOBAIS
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StarterGui = game:GetService("StarterGui")
-
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Info Server",
-        Text = text,
-        Duration = 4
-    })
-end
-
-local InfoSettings = {
-    ShowKatakuri = true,
-    ShowRIPIndra = true,
-    ShowEliteBoss = true,
-    ShowHakiColorVendor = true,
-    ShowFullMoon = true
-}
-
-local function checkFullMoon()
-    local moon = game.Lighting:FindFirstChild("Moon")
-    if moon and moon.Texture == "rbxassetid://9702882430" then
-        return true
-    end
+    print("Picareta não encontrada no inventário.")
     return false
 end
 
-local function updateServerInfo()
-    if InfoSettings.ShowKatakuri then
-        local katakuri = workspace:FindFirstChild("Cocoa Warrior") or workspace:FindFirstChild("Charlotte Katakuri")
-        if katakuri then notify("Katakuri está spawnado!") end
-    end
-    if InfoSettings.ShowRIPIndra then
-        local indra = workspace:FindFirstChild("RIP_Indra")
-        if indra then notify("RIP Indra está spawnado!") end
-    end
-    if InfoSettings.ShowEliteBoss then
-        local elite = workspace:FindFirstChild("Elite Pirate") or workspace:FindFirstChild("Deandre")
-        if elite then notify("Elite Boss está spawnado!") end
-    end
-    if InfoSettings.ShowHakiColorVendor then
-        local vendor = workspace:FindFirstChild("Color Specialist")
-        if vendor then notify("Vendedor de cor de Haki está spawnado!") end
-    end
-    if InfoSettings.ShowFullMoon then
-        if checkFullMoon() then
-            notify("É LUA CHEIA no servidor!")
-        end
+-- Função para voar até posição suavemente
+local function flyTo(position)
+    local hrp = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local distance = (hrp.Position - position).Magnitude
+
+    while distance > 3 and miningActive do
+        hrp.CFrame = hrp.CFrame:Lerp(CFrame.new(position + Vector3.new(0,5,0)), 0.15)
+        distance = (hrp.Position - position).Magnitude
+        RunService.Heartbeat:Wait()
     end
 end
 
-while true do
-    pcall(updateServerInfo)
-    wait(15)
+-- Função que encontra locais de mineração (exemplo simples: partes com "mine" ou "mina" no nome)
+local function getMiningSpots()
+    local spots = {}
+    for _, obj in pairs(workspace:GetChildren()) do
+        if obj:IsA("Part") then
+            local name = obj.Name:lower()
+            if string.find(name, "mine") or string.find(name, "mining") or string.find(name, "mina") or string.find(name, "mineracao") then
+                table.insert(spots, obj.Position)
+            end
+        end
+    end
+    return spots
 end
--- NEANDRO HUB - MÓDULO 11 - ESP AVANÇADO
+
+-- Função para acionar mineração
+local function mineAt(position)
+    if not equipPickaxe() then
+        print("Falha ao equipar picareta, parando mineração.")
+        miningActive = false
+        return
+    end
+
+    flyTo(position)
+
+    print("Minerando em:", position)
+    -- Acione o evento de mineração, clique ou ataque com a picareta:
+    local character = lp.Character
+    if not character then return end
+    local tool = character:FindFirstChildOfClass("Tool")
+    if tool then
+        -- Simula ataque com ferramenta (clicar ou ativar)
+        tool:Activate()
+    end
+
+    wait(3) -- espera o tempo da mineração (ajuste conforme necessário)
+end
+
+-- Loop principal de mineração
+local function startAutoMining()
+    if miningActive then return end
+    miningActive = true
+
+    spawn(function()
+        while miningActive do
+            local spots = getMiningSpots()
+            if #spots == 0 then
+                print("Nenhum local de mineração encontrado.")
+                wait(5)
+            else
+                for _, pos in ipairs(spots) do
+                    if not miningActive then break end
+                    mineAt(pos)
+                end
+            end
+        end
+    end)
+end
+
+local function stopAutoMining()
+    miningActive = false
+end
+
+-- Exemplo botão para ligar/desligar mineração (integre ao seu menu)
+local miningButton = Instance.new("TextButton")
+miningButton.Text = "Auto Mineração"
+miningButton.Size = UDim2.new(0, 150, 0, 40)
+miningButton.Position = UDim2.new(0, 10, 0, 200)
+miningButton.Parent = yourGui -- substitua pelo seu frame/menu
+
+local miningOn = false
+miningButton.MouseButton1Click:Connect(function()
+    miningOn = not miningOn
+    if miningOn then
+        miningButton.Text = "Auto Mineração: ON"
+        startAutoMining()
+    else
+        miningButton.Text = "Auto Mineração"
+        stopAutoMining()
+    end
+end)
+-- Módulo 5: Auto Pegar Relíquias (Detector e Coleta Automática)
+
+local autoRelicActive = false
+
+-- Botão no menu
+local relicBtn = Instance.new("TextButton", menuFrame)
+relicBtn.Size = UDim2.new(1, -20, 0, 30)
+relicBtn.Position = UDim2.new(0, 10, 0, 320)
+relicBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 30)
+relicBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+relicBtn.Text = "Auto Pegar Relíquias"
+relicBtn.Font = Enum.Font.GothamBold
+relicBtn.TextSize = 14
+
+local relicCorner = Instance.new("UICorner", relicBtn)
+relicCorner.CornerRadius = UDim.new(0, 6)
+
+-- Função para detectar relíquias
+local function getClosestRelic()
+	local closest = nil
+	local shortestDistance = math.huge
+	for _, obj in pairs(workspace:GetDescendants()) do
+		if obj:IsA("BasePart") and string.find(obj.Name:lower(), "rel") then
+			local dist = (obj.Position - lp.Character.HumanoidRootPart.Position).Magnitude
+			if dist < shortestDistance then
+				shortestDistance = dist
+				closest = obj
+			end
+		end
+	end
+	return closest
+end
+
+-- Loop automático
+task.spawn(function()
+	while true do
+		wait(2)
+		if autoRelicActive and lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+			local relic = getClosestRelic()
+			if relic then
+				local hrp = lp.Character.HumanoidRootPart
+				-- Voo até a relíquia
+				hrp.CFrame = relic.CFrame + Vector3.new(0, 5, 0)
+				wait(0.5)
+				-- Simula toque (se o jogo usar ClickDetector)
+				local click = relic:FindFirstChildOfClass("ClickDetector")
+				if click then
+					fireclickdetector(click)
+				end
+			end
+		end
+	end
+end)
+
+-- Alterna ativação
+relicBtn.MouseButton1Click:Connect(function()
+	autoRelicActive = not autoRelicActive
+	relicBtn.Text = autoRelicActive and "Pegando Relíquias..." or "Auto Pegar Relíquias"
+	relicBtn.BackgroundColor3 = autoRelicActive and Color3.fromRGB(30, 60, 30) or Color3.fromRGB(15, 15, 30)
+end)
+-- 📦 Módulo 6 atualizado: Auto roubo banco + abrir baús + pegar item do pedestal
+
+local function procurarBancos()
+	local bancos = {}
+	for _, obj in pairs(workspace:GetDescendants()) do
+		if obj:IsA("BasePart") and obj.Name:lower():find("banco") then
+			table.insert(bancos, obj)
+		end
+	end
+	return bancos
+end
+
+local function voarAte(posicao)
+	local hrp = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	local distancia = (hrp.Position - posicao).Magnitude
+	local passos = math.clamp(distancia / 20, 5, 80)
+
+	for i = 1, passos do
+		task.wait()
+		local destino = hrp.Position:Lerp(posicao, i / passos)
+		hrp.CFrame = CFrame.new(destino + Vector3.new(0, 15, 0))
+	end
+end
+
+local function abrirBau(bau)
+	if not bau or not bau:IsA("BasePart") then return end
+
+	firetouchinterest(lp.Character.HumanoidRootPart, bau, 0)
+	task.wait(0.3)
+	firetouchinterest(lp.Character.HumanoidRootPart, bau, 1)
+	print("📦 Baú aberto:", bau.Name)
+	task.wait(1)
+end
+
+local function pegarItemPedestal(pedestal)
+	if not pedestal or not pedestal:IsA("BasePart") then return end
+
+	firetouchinterest(lp.Character.HumanoidRootPart, pedestal, 0)
+	task.wait(0.3)
+	firetouchinterest(lp.Character.HumanoidRootPart, pedestal, 1)
+	print("🎁 Item do pedestal coletado:", pedestal.Name)
+	task.wait(1)
+end
+
+local function iniciarRouboBancos()
+	while true do
+		task.wait(5)
+		local bancos = procurarBancos()
+		if #bancos == 0 then
+			print("❌ Nenhum banco encontrado no momento.")
+		else
+			for _, banco in pairs(bancos) do
+				print("🏦 Banco detectado:", banco.Name)
+				if banco.Transparency < 0.9 and banco.CanCollide then
+					print("🔒 Banco parece fechado. Aguardando...")
+				else
+					print("🔓 Banco disponível! Indo até ele...")
+					voarAte(banco.Position)
+
+					-- Tenta roubar banco
+					firetouchinterest(lp.Character.HumanoidRootPart, banco, 0)
+					task.wait(0.3)
+					firetouchinterest(lp.Character.HumanoidRootPart, banco, 1)
+					print("💰 Tentando roubar o banco:", banco.Name)
+					task.wait(10)
+
+					-- Procurar baús dentro do banco
+					local baus = {}
+					for _, obj in pairs(banco:GetChildren()) do
+						if obj:IsA("BasePart") and obj.Name:lower():find("bau") then
+							table.insert(baus, obj)
+						end
+					end
+
+					for _, bau in pairs(baus) do
+						abrirBau(bau)
+					end
+
+					-- Procurar item no pedestal dentro do banco
+					for _, obj in pairs(banco:GetChildren()) do
+						if obj:IsA("BasePart") and obj.Name:lower():find("pedestal") then
+							pegarItemPedestal(obj)
+						end
+					end
+
+					task.wait(5) -- espera um pouco antes do próximo banco
+				end
+			end
+		end
+	end
+end
+
+-- Ativador:
+task.spawn(iniciarRouboBancos)
+-- -- Módulo 7: Auto Cura e Auto Buff
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
-local localPlayer = Players.LocalPlayer
+local lp = Players.LocalPlayer
 
-local espSettings = {
-    ShowFruits = true,
-    ShowPlayers = true,
-    ShowChests = true,
-    ShowFruitNames = true
-}
+-- Configurações do módulo
+local healingThreshold = 0.4 -- Cura quando a vida estiver abaixo de 40%
+local buffCooldown = 30      -- segundos entre buffs automáticos
+local lastBuffTime = 0       -- controle do cooldown
 
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - ESP",
-        Text = text,
-        Duration = 3
-    })
+-- UI do módulo dentro do menu principal (assumindo que já tenha uma 'dragFrame' principal)
+local module7Frame = Instance.new("Frame", dragFrame)
+module7Frame.Size = UDim2.new(1, -20, 0, 60)
+module7Frame.Position = UDim2.new(0, 10, 0, 410) -- Ajuste conforme seu layout
+module7Frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+module7Frame.BorderSizePixel = 0
+module7Frame.Visible = true
+
+local uiCorner = Instance.new("UICorner", module7Frame)
+uiCorner.CornerRadius = UDim.new(0, 10)
+
+local titleLabel = Instance.new("TextLabel", module7Frame)
+titleLabel.Size = UDim2.new(1, -20, 0, 25)
+titleLabel.Position = UDim2.new(0, 10, 0, 5)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Auto Cura e Buff"
+titleLabel.TextColor3 = Color3.fromRGB(255, 50, 50) -- vermelho
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 18
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local toggleButton = Instance.new("TextButton", module7Frame)
+toggleButton.Size = UDim2.new(0, 120, 0, 30)
+toggleButton.Position = UDim2.new(1, -130, 0, 25)
+toggleButton.BackgroundColor3 = Color3.fromRGB(20, 20, 80) -- azul escuro
+toggleButton.TextColor3 = Color3.fromRGB(255, 50, 50)       -- vermelho
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.TextSize = 16
+toggleButton.Text = "Ativado"
+toggleButton.AutoButtonColor = false
+
+local enabled = true
+
+toggleButton.MouseButton1Click:Connect(function()
+    enabled = not enabled
+    if enabled then
+        toggleButton.Text = "Ativado"
+        toggleButton.BackgroundColor3 = Color3.fromRGB(20, 20, 80)
+    else
+        toggleButton.Text = "Desativado"
+        toggleButton.BackgroundColor3 = Color3.fromRGB(80, 20, 20)
+    end
+end)
+
+-- Função para obter percentual de vida
+local function getHealthPercent()
+    local char = lp.Character
+    if not char then return 1 end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return 1 end
+    return humanoid.Health / humanoid.MaxHealth
 end
 
--- Função para criar marcador ESP
-local function createESP(object, text)
-    if not object:FindFirstChild("ESPLabel") then
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "ESPLabel"
-        billboard.Size = UDim2.new(0, 100, 0, 40)
-        billboard.Adornee = object
-        billboard.AlwaysOnTop = true
-        billboard.Parent = object
+-- Função para usar poção de cura (ajuste conforme o seu evento)
+local function usarPocaoCura()
+    print("🧪 Usando poção de cura!")
+    -- Exemplo genérico: substituir pela função do seu jogo
+    -- lp:WaitForChild("RemoteEvent"):FireServer("UsePotion", "Health")
+end
 
-        local label = Instance.new("TextLabel", billboard)
-        label.Size = UDim2.new(1, 0, 1, 0)
-        label.BackgroundTransparency = 1
-        label.TextColor3 = Color3.fromRGB(255, 255, 255)
-        label.TextStrokeTransparency = 0.5
-        label.Text = text
-        label.TextScaled = true
+-- Função para usar buff automático (ajuste conforme o seu evento)
+local function usarBuff()
+    local agora = tick()
+    if agora - lastBuffTime < buffCooldown then return end
+    print("✨ Usando buff automático!")
+    -- Exemplo genérico: substituir pela função do seu jogo
+    -- lp:WaitForChild("RemoteEvent"):FireServer("UseBuff", "MagicPower")
+    lastBuffTime = agora
+end
+
+-- Loop principal do módulo
+task.spawn(function()
+    while true do
+        if enabled then
+            local hp = getHealthPercent()
+            if hp < healingThreshold then
+                usarPocaoCura()
+            end
+            usarBuff()
+        end
+        task.wait(5)
+    end
+end)
+-- 8 módulo ESP de Players
+
+local espEnabled = false
+
+-- Função para criar o ESP nos jogadores
+local function createESP(player)
+    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
+    if player == game.Players.LocalPlayer then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Adornee = player.Character
+    highlight.FillColor = Color3.fromRGB(0, 120, 255)      -- Azul secundário
+    highlight.OutlineColor = Color3.fromRGB(255, 0, 0)     -- Vermelho detalhe
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = espEnabled
+    highlight.Name = "ESPHighlight"
+    highlight.Parent = player.Character
+end
+
+-- Remove ESP dos jogadores
+local function removeESP(player)
+    if player.Character then
+        local highlight = player.Character:FindFirstChild("ESPHighlight")
+        if highlight then
+            highlight:Destroy()
+        end
     end
 end
 
--- Atualiza os marcadores
+-- Atualiza ESP para todos jogadores
 local function updateESP()
-    -- Frutas
-    if espSettings.ShowFruits then
-        for _, obj in pairs(workspace:GetChildren()) do
-            if obj:IsA("Tool") and obj:FindFirstChild("Handle") then
-                local label = espSettings.ShowFruitNames and ("🍉 " .. obj.Name) or "🍉 Fruta"
-                createESP(obj.Handle, label)
+    for _, player in pairs(game.Players:GetPlayers()) do
+        if espEnabled then
+            if not player.Character or not player.Character:FindFirstChild("ESPHighlight") then
+                createESP(player)
             end
-        end
-    end
-
-    -- Baús
-    if espSettings.ShowChests then
-        for _, chest in pairs(workspace:GetDescendants()) do
-            if chest:IsA("MeshPart") and string.find(chest.Name:lower(), "chest") then
-                createESP(chest, "💰 Baú")
-            end
-        end
-    end
-
-    -- Jogadores
-    if espSettings.ShowPlayers then
-        for _, player in pairs(Players:GetPlayers()) do
-            if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                createESP(player.Character.HumanoidRootPart, "👤 " .. player.Name)
-            end
+        else
+            removeESP(player)
         end
     end
 end
 
--- Executar constantemente
-RunService.RenderStepped:Connect(updateESP)
-notify("ESP Avançado ativado!")
--- NEANDRO HUB - MÓDULO 12 - PvP Avançado
+-- Atualiza ESP ao entrar novo jogador
+game.Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        if espEnabled then
+            wait(1)
+            createESP(player)
+        end
+    end)
+end)
 
+-- Botão no menu para ligar/desligar ESP
+
+local espButton = Instance.new("TextButton", dragFrame)  -- Usando seu dragFrame/menu já existente
+espButton.Size = UDim2.new(0, 180, 0, 40)
+espButton.Position = UDim2.new(0, 10, 0, 450)            -- Ajuste posição conforme menu
+espButton.BackgroundColor3 = Color3.fromRGB(10, 10, 10)  -- Preto dominante
+espButton.BorderSizePixel = 0
+espButton.TextColor3 = Color3.fromRGB(0, 120, 255)       -- Azul secundário
+espButton.Font = Enum.Font.GothamBold
+espButton.TextSize = 16
+espButton.Text = "ESP Players: OFF"
+
+espButton.MouseButton1Click:Connect(function()
+    espEnabled = not espEnabled
+    espButton.Text = espEnabled and "ESP Players: ON" or "ESP Players: OFF"
+    espButton.TextColor3 = espEnabled and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0, 120, 255)  -- vermelho ligado, azul desligado
+    updateESP()
+end)
+
+-- Se quiser rodar a atualização periódica (caso algo falhe), pode usar loop:
+
+spawn(function()
+    while true do
+        wait(5)
+        updateESP()
+    end
+end)
+-- Módulo 8: Auto Pegar Baú da Missão
+
+local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
-local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local lp = Players.LocalPlayer
 
-local PvPSettings = {
-    PvPEnabled = false,
-    UseFastPunch = true,
-    UseSkills = true,
-    SelectedWeapon = "Melee", -- Opções: "Melee", "Fruta", "Arma", "Espada"
-    SelectedSkills = {Z = true, X = true, C = false, V = false}
-}
+-- Nome ou identificação do baú no jogo (exemplo: pode ser "MissionChest" ou "BaúMissao", adapte conforme o nome exato do objeto)
+local CHEST_NAME = "MissionChest"  -- Mude esse nome para o que seu jogo usa para o baú
 
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - PvP",
-        Text = text,
-        Duration = 3
-    })
-end
-
--- Função para simular pressionar tecla (ajuste para Delta Executor)
-local function pressKey(key)
-    -- Aqui você deve usar a função correta para disparar skill no Delta
-    -- Exemplo fictício, ajuste conforme API Delta:
-    -- delta:PressKey(key)
-end
-
--- Função para ataque automático ao jogador alvo
-local function attackPlayer(target)
-    if not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then return end
-
-    -- Teleporte próximo do alvo
-    local targetPos = target.Character.HumanoidRootPart.Position
-    local tpPos = targetPos + Vector3.new(0, 2, 0)
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(tpPos)
-    end
-
-    -- Usar skills selecionadas
-    if PvPSettings.UseSkills then
-        for key, enabled in pairs(PvPSettings.SelectedSkills) do
-            if enabled then
-                pressKey(Enum.KeyCode[key])
-                wait(0.2)
-            end
-        end
-    end
-
-    -- Socos rápidos limitados para evitar mortes suspeitas
-    if PvPSettings.UseFastPunch then
-        for i = 1, 4 do
-            -- Simular clique esquerdo do mouse para soco (ajuste para Delta)
-            -- delta:ClickMouse()
-            wait(0.05)
-        end
-    end
-
-    notify("Ataque concluído em " .. target.Name)
-end
-
--- Criar interface PvP com lista de jogadores
-local function CreatePvPGUI()
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_PvP_UI"
-    screen.ResetOnSpawn = false
-    screen.Parent = PlayerGui
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 350, 0, 500)
-    frame.Position = UDim2.new(0, 20, 0.3, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 0
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.BackgroundTransparency = 1
-    title.Text = "NEANDRO HUB - PvP Avançado"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 24
-    title.TextColor3 = Color3.fromRGB(255, 50, 50)
-    title.Parent = frame
-
-    local playerList = Instance.new("ScrollingFrame")
-    playerList.Size = UDim2.new(1, -20, 1, -60)
-    playerList.Position = UDim2.new(0, 10, 0, 50)
-    playerList.CanvasSize = UDim2.new(0, 0, 3, 0)
-    playerList.ScrollBarThickness = 6
-    playerList.BackgroundTransparency = 1
-    playerList.Parent = frame
-
-    local y = 0
-    for _, plr in pairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            local btn = Instance.new("TextButton")
-            btn.Size = UDim2.new(1, -10, 0, 40)
-            btn.Position = UDim2.new(0, 5, 0, y)
-            btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-            btn.TextColor3 = Color3.new(1,1,1)
-            btn.Font = Enum.Font.SourceSans
-            btn.TextSize = 18
-            btn.Text = plr.Name
-            btn.Parent = playerList
-
-            btn.MouseButton1Click:Connect(function()
-                attackPlayer(plr)
-            end)
-
-            y = y + 45
-        end
-    end
-end
-
-CreatePvPGUI()
-notify("Módulo PvP ativado!")
--- NEANDRO HUB - MÓDULO 13 - Auto Raid e Auto Bosses
-
-local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
-local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-
-local RaidSettings = {
-    AutoRaidEnabled = false,
-    KillAuraEnabled = false,
-    TargetBoss = nil, -- Nome do boss alvo ("Katakuri", "RIP Indra", etc)
-    RaidAreas = {
-        "Fábrica", "Castelo do Mar", "RIP Indra", "Katakuri",
-        "Ilha da Miragem", "Mar Espiritual", "Ilha da Neve"
-    },
-    SelectedRaidArea = "Fábrica"
-}
-
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Auto Raid",
-        Text = text,
-        Duration = 3
-    })
-end
-
--- Função para teleporte simples
-local function teleportToPosition(pos)
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(pos)
-    end
-end
-
--- Função simulada para atacar o boss (deve ser adaptada ao seu ambiente)
-local function attackBoss(boss)
-    -- Aqui deve ter o ataque automático:
-    -- Socos rápidos
-    -- Uso de skills
-    -- KillAura se ativado
-    -- Lógica para matar boss sem morrer
-    notify("Atacando o boss: " .. boss.Name)
-end
-
--- Função para encontrar boss na área selecionada
-local function findBossInArea(area)
-    -- Aqui você deve procurar o boss na área, exemplo:
-    for _, npc in pairs(workspace:GetChildren()) do
-        if npc.Name == area .. " Boss" then -- Exemplo genérico, ajuste o nome real
-            return npc
+local function findChest()
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj.Name == CHEST_NAME and obj:IsA("BasePart") then
+            return obj
         end
     end
     return nil
 end
 
--- Loop principal do Auto Raid
-local function autoRaidLoop()
-    while RaidSettings.AutoRaidEnabled do
-        local boss = findBossInArea(RaidSettings.SelectedRaidArea)
-        if boss then
-            attackBoss(boss)
-        else
-            notify("Boss não encontrado na área " .. RaidSettings.SelectedRaidArea)
-        end
-        wait(5)
-    end
-end
-
--- Criar interface do módulo 13
-local function CreateAutoRaidGUI()
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_AutoRaid_UI"
-    screen.ResetOnSpawn = false
-    screen.Parent = PlayerGui
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 350, 0, 400)
-    frame.Position = UDim2.new(0, 20, 0.3, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 0
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.BackgroundTransparency = 1
-    title.Text = "NEANDRO HUB - Auto Raid e Bosses"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 22
-    title.TextColor3 = Color3.fromRGB(255, 80, 80)
-    title.Parent = frame
-
-    -- Botão ativar/desativar Auto Raid
-    local autoRaidBtn = Instance.new("TextButton")
-    autoRaidBtn.Size = UDim2.new(0.9, 0, 0, 50)
-    autoRaidBtn.Position = UDim2.new(0.05, 0, 0, 60)
-    autoRaidBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    autoRaidBtn.TextColor3 = Color3.new(1, 1, 1)
-    autoRaidBtn.Font = Enum.Font.SourceSansBold
-    autoRaidBtn.TextSize = 20
-    autoRaidBtn.Text = "Ativar Auto Raid"
-    autoRaidBtn.Parent = frame
-
-    local function updateAutoRaidButton()
-        if RaidSettings.AutoRaidEnabled then
-            autoRaidBtn.Text = "Desativar Auto Raid"
-            autoRaidBtn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-        else
-            autoRaidBtn.Text = "Ativar Auto Raid"
-            autoRaidBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        end
-    end
-
-    autoRaidBtn.MouseButton1Click:Connect(function()
-        RaidSettings.AutoRaidEnabled = not RaidSettings.AutoRaidEnabled
-        updateAutoRaidButton()
-        if RaidSettings.AutoRaidEnabled then
-            notify("Auto Raid ativado")
-            spawn(autoRaidLoop)
-        else
-            notify("Auto Raid desativado")
-        end
-    end)
-
-    updateAutoRaidButton()
-
-    -- Lista de áreas para selecionar Raid
-    local areaLabel = Instance.new("TextLabel")
-    areaLabel.Size = UDim2.new(0.9, 0, 0, 25)
-    areaLabel.Position = UDim2.new(0.05, 0, 0, 120)
-    areaLabel.BackgroundTransparency = 1
-    areaLabel.Text = "Selecione Área de Raid:"
-    areaLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    areaLabel.Font = Enum.Font.SourceSansBold
-    areaLabel.TextSize = 18
-    areaLabel.Parent = frame
-
-    local areaDropdown = Instance.new("TextButton")
-    areaDropdown.Size = UDim2.new(0.9, 0, 0, 35)
-    areaDropdown.Position = UDim2.new(0.05, 0, 0, 150)
-    areaDropdown.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    areaDropdown.TextColor3 = Color3.new(1, 1, 1)
-    areaDropdown.Font = Enum.Font.SourceSansBold
-    areaDropdown.TextSize = 18
-    areaDropdown.Text = RaidSettings.SelectedRaidArea
-    areaDropdown.Parent = frame
-
-    local dropdownFrame = Instance.new("Frame")
-    dropdownFrame.Size = UDim2.new(0.9, 0, 0, #RaidSettings.RaidAreas * 35)
-    dropdownFrame.Position = UDim2.new(0.05, 0, 0, 185)
-    dropdownFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    dropdownFrame.Visible = false
-    dropdownFrame.Parent = frame
-
-    for i, area in ipairs(RaidSettings.RaidAreas) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, 0, 0, 35)
-        btn.Position = UDim2.new(0, 0, 0, (i-1)*35)
-        btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 16
-        btn.Text = area
-        btn.Parent = dropdownFrame
-
-        btn.MouseButton1Click:Connect(function()
-            RaidSettings.SelectedRaidArea = area
-            areaDropdown.Text = area
-            dropdownFrame.Visible = false
-            notify("Área de Raid selecionada: " .. area)
-        end)
-    end
-
-    areaDropdown.MouseButton1Click:Connect(function()
-        dropdownFrame.Visible = not dropdownFrame.Visible
-    end)
-
-    -- Botão para ativar/desativar KillAura
-    local killAuraBtn = Instance.new("TextButton")
-    killAuraBtn.Size = UDim2.new(0.9, 0, 0, 50)
-    killAuraBtn.Position = UDim2.new(0.05, 0, 0, 310)
-    killAuraBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    killAuraBtn.TextColor3 = Color3.new(1, 1, 1)
-    killAuraBtn.Font = Enum.Font.SourceSansBold
-    killAuraBtn.TextSize = 20
-    killAuraBtn.Text = "Ativar KillAura"
-    killAuraBtn.Parent = frame
-
-    local function updateKillAuraButton()
-        if RaidSettings.KillAuraEnabled then
-            killAuraBtn.Text = "Desativar KillAura"
-            killAuraBtn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-        else
-            killAuraBtn.Text = "Ativar KillAura"
-            killAuraBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        end
-    end
-
-    killAuraBtn.MouseButton1Click:Connect(function()
-        RaidSettings.KillAuraEnabled = not RaidSettings.KillAuraEnabled
-        updateKillAuraButton()
-        notify("KillAura " .. (RaidSettings.KillAuraEnabled and "ativado" or "desativado"))
-    end)
-
-    updateKillAuraButton()
-end
-
-CreateAutoRaidGUI()
-notify("Módulo Auto Raid carregado!")
--- NEANDRO HUB - MÓDULO 14 - Info Server e Eventos
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
-
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
-local infoSettings = {
-    ShowHakiVendor = false,
-    ShowKatakuri = false,
-    ShowRipIndra = false,
-    ShowEliteBoss = false,
-    ShowMirageIsland = false,
-    ShowDeathKing = false,
-    ShowMoon = false,
-    ShowLegendaryDealer = false
-}
-
-local function notify(msg)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Info Server",
-        Text = msg,
-        Duration = 3
-    })
-end
-
-local function checkEvent(name)
-    for _, obj in pairs(workspace:GetChildren()) do
-        if obj.Name:lower():find(name:lower()) then
-            return true
-        end
-    end
-    return false
-end
-
-local function updateIndicators(indicators)
-    indicators.HakiVendor.BackgroundColor3 = checkEvent("Haki") and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
-    indicators.Katakuri.BackgroundColor3 = checkEvent("Katakuri") and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
-    indicators.RipIndra.BackgroundColor3 = checkEvent("Indra") and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
-    indicators.EliteBoss.BackgroundColor3 = checkEvent("Elite") and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
-    indicators.Mirage.BackgroundColor3 = checkEvent("Mirage") and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
-    indicators.DeathKing.BackgroundColor3 = checkEvent("Death") and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
-    indicators.LegendaryDealer.BackgroundColor3 = checkEvent("Legendary") and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
-end
-
-local function CreateInfoServerUI()
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_InfoServer_UI"
-    screen.Parent = PlayerGui
-    screen.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 350, 0, 420)
-    frame.Position = UDim2.new(0, 380, 0.3, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 0
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.Text = "NEANDRO HUB - Info Server"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 20
-    title.TextColor3 = Color3.fromRGB(0, 170, 255)
-    title.BackgroundTransparency = 1
-    title.Parent = frame
-
-    local indicators = {}
-
-    local names = {
-        {"Haki Vendor", "HakiVendor"},
-        {"Katakuri", "Katakuri"},
-        {"RIP Indra", "RipIndra"},
-        {"Elite Boss", "EliteBoss"},
-        {"Mirage Island", "Mirage"},
-        {"Death King", "DeathKing"},
-        {"Legendary Dealer", "LegendaryDealer"}
-    }
-
-    local posY = 50
-    for _, pair in ipairs(names) do
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(0.75, 0, 0, 35)
-        label.Position = UDim2.new(0.05, 0, 0, posY)
-        label.Text = pair[1]
-        label.TextColor3 = Color3.new(1, 1, 1)
-        label.Font = Enum.Font.SourceSans
-        label.TextSize = 18
-        label.BackgroundTransparency = 1
-        label.Parent = frame
-
-        local circle = Instance.new("Frame")
-        circle.Size = UDim2.new(0, 20, 0, 20)
-        circle.Position = UDim2.new(0.85, 0, 0, posY + 7)
-        circle.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-        circle.BorderSizePixel = 0
-        circle.Name = pair[2]
-        circle.Parent = frame
-        indicators[pair[2]] = circle
-
-        posY = posY + 40
-    end
-
-    -- Atualizador contínuo
-    spawn(function()
-        while true do
-            updateIndicators(indicators)
-            wait(5)
-        end
-    end)
-end
-
-CreateInfoServerUI()
-notify("Módulo Info Server carregado!")
--- NEANDRO HUB - MÓDULO 15 - Progressão Inteligente e Teleporte
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TeleportService = game:GetService("TeleportService")
-local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
-
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
-local ProgressionSettings = {
-    AutoAdvanceSea2 = false,
-    AutoAdvanceSea3 = false,
-    AutoBartiloQuest = false,
-    AutoUnlockIslands = false,
-    AutoSeaSwap = false,
-    SelectedSea = 1,
-    AutoQuests = true
-}
-
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Progressão",
-        Text = text,
-        Duration = 3
-    })
-end
-
--- Interface gráfica
-local function CreateModule15UI()
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_Module15_GUI"
-    screen.Parent = PlayerGui
-    screen.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 350, 0, 500)
-    frame.Position = UDim2.new(0.45, 0, 0.1, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 0
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.Text = "Módulo 15 - Progressão & Sea"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 22
-    title.TextColor3 = Color3.fromRGB(0, 170, 255)
-    title.BackgroundTransparency = 1
-    title.Parent = frame
-
-    local function createToggle(text, settingKey, posY)
-        local container = Instance.new("Frame")
-        container.Size = UDim2.new(1, -20, 0, 40)
-        container.Position = UDim2.new(0, 10, 0, posY)
-        container.BackgroundTransparency = 1
-        container.Parent = frame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.85, 0, 1, 0)
-        btn.Position = UDim2.new(0, 0, 0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 18
-        btn.Text = text .. ": OFF"
-        btn.Parent = container
-
-        local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.new(0, 30, 0, 30)
-        indicator.Position = UDim2.new(0.87, 0, 0.1, 0)
-        indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-        indicator.BorderSizePixel = 0
-        indicator.Parent = container
-
-        local function update()
-            if ProgressionSettings[settingKey] then
-                btn.Text = text .. ": ON"
-                btn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-                indicator.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-            else
-                btn.Text = text .. ": OFF"
-                btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-                indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-            end
-        end
-
-        update()
-
-        btn.MouseButton1Click:Connect(function()
-            ProgressionSettings[settingKey] = not ProgressionSettings[settingKey]
-            update()
-            notify(text .. (ProgressionSettings[settingKey] and " ativado" or " desativado"))
-        end)
-    end
-
-    local options = {
-        {"Auto Passar Sea 2 (LVL 700+)", "AutoAdvanceSea2"},
-        {"Auto Passar Sea 3 (LVL 1500+)", "AutoAdvanceSea3"},
-        {"Auto Quest Bartilo", "AutoBartiloQuest"},
-        {"Auto Desbloquear Ilhas", "AutoUnlockIslands"},
-        {"Auto Trocar de Sea", "AutoSeaSwap"},
-        {"Auto Quests Importantes", "AutoQuests"}
-    }
-
-    local posY = 50
-    for _, opt in ipairs(options) do
-        createToggle(opt[1], opt[2], posY)
-        posY = posY + 45
-    end
-end
-
-CreateModule15UI()
-notify("Módulo 15 carregado!")
--- MÓDULO 16 - ENGENHARIA CENTRAL DO NEANDRO HUB
--- Todas as funções principais do script, controle das ações, lógica de automações, teleporte, farm, quests, etc.
-
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-
-local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-local mouse = player:GetMouse()
-
-local NEANDRO = {} -- tabela principal do módulo 16
-
--- Configurações globais do módulo
-NEANDRO.Config = {
-    AutoFarmEnabled = false,
-    AutoRaidEnabled = false,
-    AutoQuestEnabled = false,
-    AutoSeaEventEnabled = false,
-    AutoTeleportEnabled = false,
-    CurrentSea = 1, -- 1, 2 ou 3
-    FarmTarget = nil, -- alvo para farm (NPC ou mob)
-    TeleportDestination = nil,
-    SafeDistance = 50, -- distância segura para parar de teleporte
-    IsTeleporting = false,
-    SkillUsage = true,
-    PunchSpeed = 5, -- socos por segundo
-}
-
--- Função principal de teleporte suave para uma posição (usando TweenService)
-function NEANDRO:Teleport(position)
-    if self.Config.IsTeleporting then return end
-    self.Config.IsTeleporting = true
-
-    local tweenInfo = TweenInfo.new(
-        (humanoidRootPart.Position - position).Magnitude / 100, -- duração proporcional à distância
-        Enum.EasingStyle.Linear
-    )
-
-    local tween = TweenService:Create(humanoidRootPart, tweenInfo, {CFrame = CFrame.new(position)})
-    tween:Play()
-    tween.Completed:Wait()
-    self.Config.IsTeleporting = false
-end
-
--- Função para ir até um alvo (NPC, mob, boss etc) e atacar com socos e skills
-function NEANDRO:Farm(target)
-    if not target or not target.Parent then return end
-    local targetHRP = target:FindFirstChild("HumanoidRootPart")
-    if not targetHRP then return end
-
-    -- Teleporte até perto do alvo com uma distância segura
-    local pos = targetHRP.Position - (targetHRP.CFrame.LookVector * self.Config.SafeDistance)
-    self:Teleport(pos)
-
-    -- Atacar repetidamente enquanto o alvo estiver vivo e AutoFarm ativo
-    while self.Config.AutoFarmEnabled and target.Parent and target.Humanoid.Health > 0 do
-        -- Soco rápido (simula ataques)
-        self:UsePunch()
-        -- Usar skills se configurado
-        if self.Config.SkillUsage then
-            self:UseSkills()
-        end
-        wait(1 / self.Config.PunchSpeed)
-    end
-end
-
--- Função para usar soco (basicamente simula clique rápido)
-function NEANDRO:UsePunch()
-    -- Código para ativar ataque básico (soco)
-    -- Exemplo: disparar evento de ataque ou simular clique (depende da API do executor)
-    -- Aqui só um placeholder
-    print("Soco usado")
-end
-
--- Função para usar skills de fruta ou arma
-function NEANDRO:UseSkills()
-    -- Aqui você coloca código para usar skills (Z, X, C, V) de forma inteligente
-    -- Exemplo: disparar eventos remotos para usar skill
-    print("Skill usada")
-end
-
--- Função para pegar quests automaticamente
-function NEANDRO:AutoQuest()
-    if not self.Config.AutoQuestEnabled then return end
-
-    -- Buscar NPCs de quest no mapa
-    -- Ir até o NPC
-    -- Aceitar a missão via eventos remotos
-    -- Realizar a missão
-    -- Entregar missão
-    print("Auto quest ativada")
-    -- Essa função é detalhada e depende do mapa e eventos remotos do jogo
-end
-
--- Função para detectar e atacar Sea Events automaticamente
-function NEANDRO:AutoSeaEvents()
-    if not self.Config.AutoSeaEventEnabled then return end
-
-    -- Detectar bosses/eventos que spawnam (Katakuri, RIP Indra, etc)
-    -- Teleportar até eles
-    -- Atacar até matar
-    -- Recolher recompensa
-    print("Auto Sea Events ativado")
-end
-
--- Função para auto Raid (matar mobs/boss para raid)
-function NEANDRO:AutoRaid()
-    if not self.Config.AutoRaidEnabled then return end
-
-    -- Localizar mobs do Raid atual
-    -- Teleportar e matar com kill aura (socos + skills)
-    print("Auto Raid ativado")
-end
-
--- Função para ativar auto distribuir status
-function NEANDRO:AutoDistributeStatus()
-    -- Distribuir pontos automaticamente com base em configuração do usuário
-    print("Auto distribuir status ativado")
-end
-
--- Função para auto girar fruta
-function NEANDRO:AutoSpinFruit()
-    -- Se ativado, roda a fruta automaticamente via eventos remotos
-    print("Auto girar fruta ativado")
-end
-
--- Função para auto comprar fruta da loja
-function NEANDRO:AutoBuyFruit(fruitName)
-    -- Se a fruta estiver disponível na loja, compra automaticamente
-    print("Auto comprar fruta: "..fruitName)
-end
-
--- Função para auto usar barco e consertar
-function NEANDRO:AutoBoat()
-    -- Compra barco escolhido
-    -- Teleporta para o barco
-    -- Se estiver danificado, usa martelinho para consertar
-    print("Auto barco ativado")
-end
-
--- Função para exibir informações do Info Server (spawn de bosses, vendedores, lua cheia etc)
-function NEANDRO:InfoServerStatus()
-    -- Monitorar status dos bosses e eventos
-    -- Atualizar interface com bolinhas verdes/vermelhas para indicar spawn
-    print("Atualizando info server")
-end
-
--- Loop principal que mantém as ações rodando conforme configuração
-function NEANDRO:MainLoop()
-    RunService.Heartbeat:Connect(function()
-        if self.Config.AutoFarmEnabled and self.Config.FarmTarget then
-            self:Farm(self.Config.FarmTarget)
-        end
-        if self.Config.AutoQuestEnabled then
-            self:AutoQuest()
-        end
-        if self.Config.AutoSeaEventEnabled then
-            self:AutoSeaEvents()
-        end
-        if self.Config.AutoRaidEnabled then
-            self:AutoRaid()
-        end
-        -- Atualizar info server
-        self:InfoServerStatus()
-    end)
-end
-
--- Inicialização
-function NEANDRO:Init()
-    print("NEANDRO HUB - Módulo 16 iniciado")
-    self:MainLoop()
-end
-
--- Retornar módulo para ser usado no script principal
-return NEANDRO
--- Módulo 16.1 - Gerenciamento Avançado e Suporte NEANDRO HUB
-local Module16_1 = {}
-
--- Estado geral do script
-Module16_1.State = {
-    IsRunning = false,
-    IsPaused = false,
-    ActiveFeatures = {}, -- tabela para rastrear funções ativadas
-    SecurityEnabled = true,
-}
-
--- Função para ativar uma feature
-function Module16_1:ActivateFeature(featureName)
-    self.State.ActiveFeatures[featureName] = true
-    print("Feature ativada:", featureName)
-    -- aqui pode disparar evento para módulo 16 executar ação
-end
-
--- Função para desativar uma feature
-function Module16_1:DeactivateFeature(featureName)
-    self.State.ActiveFeatures[featureName] = false
-    print("Feature desativada:", featureName)
-    -- aqui pode disparar evento para módulo 16 parar ação
-end
-
--- Função para verificar status da feature
-function Module16_1:IsFeatureActive(featureName)
-    return self.State.ActiveFeatures[featureName] == true
-end
-
--- Função para pausar o script inteiro (exemplo)
-function Module16_1:Pause()
-    self.State.IsPaused = true
-    print("Script pausado")
-    -- aqui pode chamar métodos para parar loops, farm, etc
-end
-
--- Função para continuar o script após pausa
-function Module16_1:Resume()
-    self.State.IsPaused = false
-    print("Script retomado")
-    -- aqui pode reiniciar loops, farm, etc
-end
-
--- Função para ativar/desativar segurança anti-ban/kick
-function Module16_1:SetSecurity(enabled)
-    self.State.SecurityEnabled = enabled
-    if enabled then
-        print("Segurança ativada")
-        -- Lógica para ativar proteções (delay, randomização etc)
-    else
-        print("Segurança desativada")
-        -- Desativa proteções para máxima performance
-    end
-end
-
--- Monitor simples para detectar erros e reiniciar funções (exemplo)
-function Module16_1:ErrorMonitor()
-    -- Pode ser implementado para capturar erros nas funções principais e reiniciar elas automaticamente
-end
-
--- Integração com outros módulos para disparar ações
-function Module16_1:TriggerAction(actionName, params)
-    print("Disparando ação:", actionName)
-    -- Dependendo do nome da ação, chama função do módulo 16
-    -- Exemplo:
-    if actionName == "TeleportTo" and params then
-        Module16.Teleport(params.position)
-    elseif actionName == "StartAutoFarm" then
-        Module16.StartAutoFarm()
-    elseif actionName == "StopAutoFarm" then
-        Module16.StopAutoFarm()
-    -- e assim por diante para todas ações possíveis
-    end
-end
-
--- Retorna o módulo para ser usado em require()
-return Module16_1
--- Módulo 16.2 - Automação Avançada Integrada - NEANDRO HUB
-
-local Module16 = require(script.Parent.Module16)       -- Controle geral, interface, flags
-local Module16_1 = require(script.Parent.Module16_1)   -- Estados e funções auxiliares
-
-local Module16_2 = {}
-
--- Configurações de timers para controle das ações
-Module16_2.Timers = {
-    FarmDelay = 1.5,
-    QuestCheckInterval = 10,
-    TeleportCooldown = 5,
-    PvPAttackInterval = 0.8,
-}
-
--- Estado interno para controle de cooldowns e alvo
-Module16_2.State = {
-    LastFarmTime = 0,
-    LastTeleportTime = 0,
-    LastPvPAttackTime = 0,
-    CurrentTarget = nil,
-}
-
--- Função para delay adaptativo (pode evoluir para análise de desempenho)
-function Module16_2:AdaptiveDelay()
-    return self.Timers.FarmDelay
-end
-
--- Função principal de Auto Farm
-function Module16_2:AutoFarm()
-    if not Module16_1.State.AutoFarm then return end
-    if Module16_1.State.IsPaused then return end
-
-    local now = os.clock()
-    if now - self.State.LastFarmTime < self:AdaptiveDelay() then
+local function moveToChestAndCollect(chest)
+    if not chest then return end
+    local hrp = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- Teleportar/andar até o baú (voando ou caminhando)
+    hrp.CFrame = chest.CFrame + Vector3.new(0, 3, 0)
+
+    wait(0.3)  -- Pequena espera para garantir posição
+
+    -- Tentar "pegar" o baú (exemplo: ativar um ClickDetector, ou um ProximityPrompt)
+    local clickDetector = chest:FindFirstChildWhichIsA("ClickDetector")
+    if clickDetector then
+        clickDetector:FireClick()
+        print("Baú da missão coletado via ClickDetector!")
         return
     end
 
-    local target = self.State.CurrentTarget
-    if not target then return end
-
-    Module16.AttackTarget(target)
-    Module16.MoveToTarget(target)
-
-    self.State.LastFarmTime = now
-end
-
--- Função para Auto Quest
-function Module16_2:AutoQuest()
-    if not Module16_1.State.AutoQuest then return end
-    if Module16_1.State.IsPaused then return end
-
-    Module16.HandleQuests()
-end
-
--- Função para Auto Teleporte com cooldown
-function Module16_2:AutoTeleport(position)
-    if not Module16_1.State.AutoTeleport then return end
-    if Module16_1.State.IsPaused then return end
-
-    local now = os.clock()
-    if now - self.State.LastTeleportTime < self.Timers.TeleportCooldown then
+    local proximityPrompt = chest:FindFirstChildWhichIsA("ProximityPrompt")
+    if proximityPrompt then
+        proximityPrompt:InputHoldBegin()
+        wait(1)  -- Tempo para coletar
+        proximityPrompt:InputHoldEnd()
+        print("Baú da missão coletado via ProximityPrompt!")
         return
     end
 
-    if not position then return end
-
-    Module16.Teleport(position)
-    self.State.LastTeleportTime = now
+    -- Caso não tenha detector, talvez o script precise dar outro comando (adaptar)
+    print("Baú encontrado, mas método de coleta não detectado.")
 end
 
--- Função para Auto PvP com ataque e teleporte
-function Module16_2:AutoPvP()
-    if not Module16_1.State.AutoPvP then return end
-    if Module16_1.State.IsPaused then return end
-
-    local now = os.clock()
-    if now - self.State.LastPvPAttackTime < self.Timers.PvPAttackInterval then
-        return
-    end
-
-    local target = self.State.CurrentTarget
-    if not target then return end
-
-    Module16.Teleport(target.Position)
-    Module16.UseSkillsOnTarget(target)
-    Module16.UseQuickHits(target)
-
-    self.State.LastPvPAttackTime = now
-end
-
--- Loop principal para rodar as automações
-function Module16_2:MainLoop()
-    while Module16_1.State.IsRunning do
-        if Module16_1.State.IsPaused then
-            wait(1)
-        else
-            self:AutoFarm()
-            self:AutoQuest()
-            self:AutoPvP()
-            wait(0.1)
-        end
-    end
-end
-
--- Função para iniciar o loop em coroutine
-function Module16_2:Start()
-    if self._running then return end
-    self._running = true
-
-    coroutine.wrap(function()
-        self:MainLoop()
-    end)()
-end
-
--- Função para parar o loop
-function Module16_2:Stop()
-    self._running = false
-end
-
-return Module16_2
--- Módulo 16.3 - Manager Geral NEANDRO HUB
--- Responsável por orquestrar todos os módulos, sincronizar estados e executar comandos principais
-
-local Module1   = require(script.Parent.Module1)
-local Module2   = require(script.Parent.Module2)
--- ...
-local Module16_1 = require(script.Parent.Module16_1)
-local Module16_2 = require(script.Parent.Module16_2)
-
-local Manager = {}
-
--- Estado geral do script
-Manager.State = {
-    IsRunning = false,
-    IsPaused = false,
-    ActiveModules = {},  -- móduloName = true/false
-    CurrentTarget = nil, -- alvo para farm, pvp, etc
-    PlayerStatus = {},   -- infos como nível, Sea atual, etc
-}
-
--- Inicializa todos os módulos ativados
-function Manager:Start()
-    if self.State.IsRunning then return end
-    self.State.IsRunning = true
-    self.State.IsPaused = false
-
-    -- Ativar módulos necessários
-    for moduleName, active in pairs(self.State.ActiveModules) do
-        if active and self[moduleName] and self[moduleName].Start then
-            self[moduleName]:Start()
-        end
-    end
-
-    -- Exemplo: iniciar o loop principal de automação (módulo 16.2)
-    if Manager.Module16_2 and Manager.State.ActiveModules["Module16_2"] then
-        Manager.Module16_2:Start()
-    end
-
-    print("[NEANDRO HUB] Todos módulos iniciados.")
-end
-
--- Pausa todas operações
-function Manager:Pause()
-    self.State.IsPaused = true
-    print("[NEANDRO HUB] Script pausado.")
-end
-
--- Retoma operações
-function Manager:Resume()
-    self.State.IsPaused = false
-    print("[NEANDRO HUB] Script retomado.")
-end
-
--- Para todos os módulos e o script
-function Manager:Stop()
-    self.State.IsRunning = false
-    for moduleName, active in pairs(self.State.ActiveModules) do
-        if self[moduleName] and self[moduleName].Stop then
-            self[moduleName]:Stop()
-        end
-    end
-    print("[NEANDRO HUB] Todos módulos parados.")
-end
-
--- Atualiza alvo global
-function Manager:SetCurrentTarget(target)
-    self.State.CurrentTarget = target
-    -- Atualiza target para módulos que precisam
-    if Manager.Module16_2 then
-        Manager.Module16_2.State.CurrentTarget = target
-    end
-    -- Poderia atualizar para mais módulos conforme necessidade
-end
-
--- Atualiza status do player
-function Manager:UpdatePlayerStatus(statusTable)
-    for k,v in pairs(statusTable) do
-        self.State.PlayerStatus[k] = v
-    end
-    -- Pode fazer triggers para adaptar script conforme nível, Sea, etc
-end
-
--- Ativa ou desativa um módulo
-function Manager:SetModuleActive(moduleName, active)
-    self.State.ActiveModules[moduleName] = active
-    if active and self[moduleName] and self[moduleName].Start then
-        self[moduleName]:Start()
-    elseif not active and self[moduleName] and self[moduleName].Stop then
-        self[moduleName]:Stop()
-    end
-end
-
--- Executa ações personalizadas conforme input do menu ou triggers
-function Manager:ExecuteAction(actionName, params)
-    if actionName == "TeleportTo" and params.position then
-        if Manager.Module16_2 then
-            Manager.Module16_2:AutoTeleport(params.position)
-        end
-    elseif actionName == "UseSkill" and params.skillName then
-        if Manager.Module16_2 then
-            -- Exemplo: chamar função para usar skill
-            Manager.Module16_2:UseSkill(params.skillName)
-        end
-    elseif actionName == "StartRaid" then
-        if Manager.Module5 then -- supondo que Módulo 5 seja Raid
-            Manager.Module5:StartRaid()
-        end
-    end
-    -- Pode expandir para outras ações
-end
-
--- Tratamento básico de erros (exemplo)
-function Manager:SafeCall(func, ...)
-    local ok, err = pcall(func, ...)
-    if not ok then
-        print("[NEANDRO HUB][ERRO]", err)
-        -- Pode implementar notificação visual ou sonora
-    end
-end
-
--- Linkar todos módulos
-Manager.Module1   = Module1
-Manager.Module2   = Module2
--- ...
-Manager.Module16_1 = Module16_1
-Manager.Module16_2 = Module16_2
-
--- Inicializa ActiveModules default para todos módulos
-Manager.State.ActiveModules = {
-    Module1 = false,
-    Module2 = false,
-    -- ...
-    Module16_1 = true,  -- interface e flags ativados por padrão
-    Module16_2 = true,  -- automação ativa por padrão
-}
-
-return Manager
--- Módulo 16.4 - Sistema de Logs e Notificações NEANDRO HUB
-
-local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
-local SoundService = game:GetService("SoundService")
-
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
-local Logger = {}
-
--- Configurações básicas
-Logger.MaxLogEntries = 100 -- Quantidade máxima de logs armazenados
-
--- Armazenamento dos logs em memória
-Logger.Logs = {}
-
--- Sons para notificações
-Logger.Sounds = {
-    Info = Instance.new("Sound", SoundService),
-    Warning = Instance.new("Sound", SoundService),
-    Error = Instance.new("Sound", SoundService),
-    Success = Instance.new("Sound", SoundService),
-}
-
--- Configurar sons (usar sons padrão Roblox ou custom)
-Logger.Sounds.Info.SoundId = "rbxassetid://9118825142"     -- Som informativo
-Logger.Sounds.Warning.SoundId = "rbxassetid://9118825869"  -- Som de aviso
-Logger.Sounds.Error.SoundId = "rbxassetid://9118826673"    -- Som de erro
-Logger.Sounds.Success.SoundId = "rbxassetid://9118827395"  -- Som de sucesso
-
-for _, snd in pairs(Logger.Sounds) do
-    snd.Volume = 0.5
-    snd.PlayOnRemove = false
-end
-
--- Função para adicionar um log
-function Logger:AddLog(text, level)
-    level = level or "Info" -- Info, Warning, Error, Success
-    local timestamp = os.date("%H:%M:%S")
-    local logEntry = string.format("[%s] [%s] %s", timestamp, level, text)
-
-    table.insert(self.Logs, 1, logEntry)
-    if #self.Logs > self.MaxLogEntries then
-        table.remove(self.Logs, #self.Logs)
-    end
-
-    -- Mostrar notificação visual
-    self:ShowNotification(text, level)
-
-    -- Tocar som relacionado
-    if self.Sounds[level] then
-        self.Sounds[level]:Play()
-    end
-
-    print("[NEANDRO HUB LOG]", logEntry)
-end
-
--- Função para mostrar notificação via StarterGui
-function Logger:ShowNotification(text, level)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - " .. level,
-        Text = text,
-        Duration = 4,
-        Button1 = "OK"
-    })
-end
-
--- Função para retornar os logs atuais (para exibir na GUI)
-function Logger:GetLogs()
-    return self.Logs
-end
-
--- Cria interface GUI para visualizar logs
-function Logger:CreateLogGui()
-    if PlayerGui:FindFirstChild("NEANDRO_LogsGui") then
-        PlayerGui.NEANDRO_LogsGui:Destroy()
-    end
-
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_LogsGui"
-    screen.Parent = PlayerGui
-    screen.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 500, 0, 400)
-    frame.Position = UDim2.new(0.25, 0, 0.2, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 2
-    frame.BorderColor3 = Color3.fromRGB(0, 170, 255)
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.BackgroundTransparency = 1
-    title.Text = "Logs NEANDRO HUB - Últimas " .. self.MaxLogEntries .. " entradas"
-    title.TextColor3 = Color3.fromRGB(0, 170, 255)
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 20
-    title.Parent = frame
-
-    local closeBtn = Instance.new("TextButton")
-    closeBtn.Text = "X"
-    closeBtn.Size = UDim2.new(0, 30, 0, 30)
-    closeBtn.Position = UDim2.new(1, -35, 0, 5)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeBtn.Font = Enum.Font.SourceSansBold
-    closeBtn.TextSize = 20
-    closeBtn.Parent = frame
-
-    closeBtn.MouseButton1Click:Connect(function()
-        screen:Destroy()
-    end)
-
-    local scrollingFrame = Instance.new("ScrollingFrame")
-    scrollingFrame.Size = UDim2.new(1, -20, 1, -50)
-    scrollingFrame.Position = UDim2.new(0, 10, 0, 40)
-    scrollingFrame.BackgroundTransparency = 1
-    scrollingFrame.BorderSizePixel = 0
-    scrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    scrollingFrame.ScrollBarThickness = 6
-    scrollingFrame.Parent = frame
-
-    local uiListLayout = Instance.new("UIListLayout")
-    uiListLayout.Parent = scrollingFrame
-    uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    uiListLayout.Padding = UDim.new(0, 4)
-
-    -- Adiciona logs no GUI
-    for i, logEntry in ipairs(self.Logs) do
-        local label = Instance.new("TextLabel")
-        label.Text = logEntry
-        label.Size = UDim2.new(1, 0, 0, 20)
-        label.BackgroundTransparency = 1
-
-        -- Colorir por tipo
-        if logEntry:find("%[Error%]") then
-            label.TextColor3 = Color3.fromRGB(255, 80, 80)
-        elseif logEntry:find("%[Warning%]") then
-            label.TextColor3 = Color3.fromRGB(255, 170, 0)
-        elseif logEntry:find("%[Success%]") then
-            label.TextColor3 = Color3.fromRGB(0, 255, 0)
-        else
-            label.TextColor3 = Color3.fromRGB(255, 255, 255)
-        end
-
-        label.Font = Enum.Font.SourceSans
-        label.TextSize = 14
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Parent = scrollingFrame
-    end
-
-    -- Atualiza o CanvasSize do scrolling para caber todos logs
-    local totalHeight = (#self.Logs * 24) + (#self.Logs - 1) * 4
-    scrollingFrame.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
-end
-
--- Exemplo de uso: registrar um log ao carregar
-Logger:AddLog("Módulo 16.4 iniciado: Sistema de Logs e Notificações ativo.", "Success")
-
-return Logger
--- Módulo 16.5 - Sistema de Aprendizado e Estratégias
-local Logger = require(game.Players.LocalPlayer.PlayerGui:WaitForChild("NEANDRO_LogsGui")) -- Módulo 16.4
-
-local Strategy = {}
-Strategy.SkillScores = {}
-Strategy.FightMode = "Balanceado" -- Agressivo, Conservador ou Balanceado
-
--- Skills definidas por tipo de arma/fruta
-Strategy.Skills = {
-    Fruta = {"Z", "X", "C", "V"},
-    Espada = {"Z", "X"},
-    Arma = {"Z", "X"},
-    Melee = {"Z", "X"}
-}
-
--- Score de desempenho
-Strategy.SkillData = {
-    ["Z"] = {hits = 0, damage = 0},
-    ["X"] = {hits = 0, damage = 0},
-    ["C"] = {hits = 0, damage = 0},
-    ["V"] = {hits = 0, damage = 0}
-}
-
--- Chamar quando causar dano
-function Strategy:OnSkillHit(skill, damage)
-    if self.SkillData[skill] then
-        self.SkillData[skill].hits += 1
-        self.SkillData[skill].damage += damage
-        Logger:AddLog("Skill " .. skill .. " causou " .. damage .. " de dano.", "Info")
-    end
-end
-
--- Retorna as melhores skills por dano
-function Strategy:GetBestSkills()
-    local scores = {}
-    for skill, data in pairs(self.SkillData) do
-        if data.hits > 0 then
-            scores[skill] = data.damage / data.hits
-        else
-            scores[skill] = 0
-        end
-    end
-
-    local sorted = {}
-    for skill, score in pairs(scores) do
-        table.insert(sorted, {skill = skill, score = score})
-    end
-
-    table.sort(sorted, function(a, b)
-        return a.score > b.score
-    end)
-
-    local result = {}
-    for _, s in ipairs(sorted) do
-        table.insert(result, s.skill)
-    end
-    return result
-end
-
--- Troca de estratégia
-function Strategy:SetFightMode(mode)
-    self.FightMode = mode
-    Logger:AddLog("Modo de combate alterado para: " .. mode, "Success")
-end
-
--- Chamada principal para atacar adaptativamente
-function Strategy:ExecuteAttack(enemyType)
-    local skills = self:GetBestSkills()
-    local delay = 0.8
-
-    if self.FightMode == "Agressivo" then
-        delay = 0.3
-    elseif self.FightMode == "Conservador" then
-        delay = 1.2
-    end
-
-    task.spawn(function()
-        for _, skill in ipairs(skills) do
-            -- Simulação de ativar skill
-            Logger:AddLog("Usando habilidade: " .. skill, "Info")
-            keypress(skill)
-            task.wait(delay)
-        end
-    end)
-end
-
--- Interface para mudar estratégia
-function Strategy:CreateStrategyUI()
-    local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
-    if PlayerGui:FindFirstChild("NEANDRO_Strategy_GUI") then
-        PlayerGui.NEANDRO_Strategy_GUI:Destroy()
-    end
-
-    local gui = Instance.new("ScreenGui", PlayerGui)
-    gui.Name = "NEANDRO_Strategy_GUI"
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 250, 0, 150)
-    frame.Position = UDim2.new(0, 40, 0.4, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-    frame.BorderColor3 = Color3.fromRGB(0, 200, 255)
-    frame.Parent = gui
-
-    local label = Instance.new("TextLabel", frame)
-    label.Size = UDim2.new(1, 0, 0, 30)
-    label.Text = "Modo de Combate"
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.Font = Enum.Font.SourceSansBold
-    label.TextSize = 20
-    label.BackgroundTransparency = 1
-
-    local function createBtn(txt, y, mode)
-        local btn = Instance.new("TextButton", frame)
-        btn.Size = UDim2.new(0.9, 0, 0, 30)
-        btn.Position = UDim2.new(0.05, 0, 0, y)
-        btn.Text = txt
-        btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 18
-
-        btn.MouseButton1Click:Connect(function()
-            Strategy:SetFightMode(mode)
-        end)
-    end
-
-    createBtn("Agressivo", 40, "Agressivo")
-    createBtn("Balanceado", 80, "Balanceado")
-    createBtn("Conservador", 120, "Conservador")
-end
-
--- Inicialização
-Strategy:CreateStrategyUI()
-Logger:AddLog("Módulo 16.5 carregado: Estratégia adaptativa pronta.", "Success")
-
-return Strategy
--- Módulo 16.6 - Integração Total com NPCs, Farm Inteligente, e Botões de Teleporte
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local TweenService = game:GetService("TweenService")
-
-local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-
--- Lista de NPCs organizados por Sea
-local NPCs = {
-    Sea1 = {
-        QuestGivers = {
-            "Boat Dealer", "Sword Dealer", "Block Dealer", "Home Point"
-        },
-        Attackable = {
-            "Bandit", "Monkey", "Gorilla", "Buggy"
-        },
-        Interactables = {
-            "Fruits Dealer", "Blox Fruit Remover", "Race NPC", "Abilities Teacher"
-        }
-    },
-    Sea2 = {
-        QuestGivers = {
-            "Flamingo", "Factory Staff", "Bartilo"
-        },
-        Attackable = {
-            "Fajita", "Don Swan", "Jeremy"
-        },
-        Interactables = {
-            "Awakening Expert", "Fighting Style Teacher", "Raids Guy"
-        }
-    },
-    Sea3 = {
-        QuestGivers = {
-            "Hydra Island Elder", "Castle King", "Elite Hunter"
-        },
-        Attackable = {
-            "RIP Indra", "Dough King", "Cursed Skeleton King"
-        },
-        Interactables = {
-            "Race Awakener", "Mirage Fruit Dealer", "GodHuman NPC"
-        }
-    }
-}
-
--- Teleporta para um NPC
-local function teleportToNPC(npcName)
-    local npc = Workspace:FindFirstChild(npcName)
-    if npc and npc:FindFirstChild("HumanoidRootPart") then
-        humanoidRootPart.CFrame = npc.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
-    end
-end
-
--- Interage com um NPC remotamente, se possível
-local function interactRemote(npcName)
-    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-    if remotes and remotes:FindFirstChild(npcName) then
-        pcall(function()
-            remotes[npcName]:FireServer()
-        end)
-    else
-        teleportToNPC(npcName)
-    end
-end
-
--- Função pública global para uso nos módulos (botões)
-_G.NEANDRO_InteractNPC = function(npcName)
-    interactRemote(npcName)
-end
-
--- Exemplo: botão no menu que chama o NPC por nome (deve estar vinculado ao botão de interface)
--- _G.NEANDRO_InteractNPC("Fruits Dealer")
-
--- Integração com Auto Farm Inteligente
-_G.NEANDRO_AutoFarmSmart = function()
-    -- Detecta nível do player e teleporta para o NPC correspondente
-    local level = player.Data.Level.Value
-    if level < 100 then
-        _G.NEANDRO_InteractNPC("Bandit")
-    elseif level < 300 then
-        _G.NEANDRO_InteractNPC("Buggy")
-    elseif level < 700 then
-        _G.NEANDRO_InteractNPC("Factory Staff")
-    elseif level >= 700 and level < 1500 then
-        _G.NEANDRO_InteractNPC("Bartilo")
-    elseif level >= 1500 then
-        _G.NEANDRO_InteractNPC("Hydra Island Elder")
-    end
-end
-
--- Farmar NPCs para ossos no cemitério
-_G.NEANDRO_AutoBoneFarm = function()
-    local mob = Workspace:FindFirstChild("Reborn Skeleton") or Workspace:FindFirstChild("Living Zombie")
-    if mob and mob:FindFirstChild("HumanoidRootPart") then
-        humanoidRootPart.CFrame = mob.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
-    end
-end
-
--- Listagem dinâmica dos NPCs por Sea e tipo para mostrar em botões do menu
-_G.NEANDRO_ListNPCsByType = function(sea, category)
-    return NPCs[sea] and NPCs[sea][category] or {}
-end
--- MÓDULO 16.7 - FUNÇÕES AVANÇADAS DE SUPORTE E ENCAIXE GLOBAL (NEANDRO HUB)
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-local player = Players.LocalPlayer
-local char = player.Character or player.CharacterAdded:Wait()
-
-_G.NEANDRO_Module167 = {
-    AutoOpenDoors = false,
-    AutoCollectDrops = false,
-    OptimizeFPS = false,
-    AutoRespawn = false,
-    AutoEnableBuso = false,
-    AutoFastSwim = false,
-    UseFastTweenTeleport = true,
-    SmartIdleAntiKick = true
-}
-
-local function Notify(msg)
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Módulo 16.7",
-        Text = msg,
-        Duration = 3
-    })
-end
-
--- SUPORTE AOS BOTÕES DOS OUTROS MÓDULOS
-function _G.NEANDRO_EnableFastTeleport(pos)
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-    if _G.NEANDRO_Module167.UseFastTweenTeleport then
-        local tween = TweenService:Create(char.HumanoidRootPart, TweenInfo.new(0.35), {CFrame = CFrame.new(pos)})
-        tween:Play()
-    else
-        char.HumanoidRootPart.CFrame = CFrame.new(pos)
-    end
-end
-
--- SUPORTE GERAL A BUSOSHOKU
-spawn(function()
-    while wait(3) do
-        if _G.NEANDRO_Module167.AutoEnableBuso and player.Character then
-            local hum = player.Character:FindFirstChild("Humanoid")
-            if hum then
-                local v = player.Character:FindFirstChild("HasBuso")
-                if not v then
-                    game:GetService("VirtualInputManager"):SendKeyEvent(true, "J", false, game)
-                end
-            end
-        end
-    end
-end)
-
--- FPS OTIMIZADOR
-if _G.NEANDRO_Module167.OptimizeFPS then
-    for _, v in pairs(game:GetDescendants()) do
-        if v:IsA("BasePart") then
-            v.Material = Enum.Material.SmoothPlastic
-            v.Reflectance = 0
-        elseif v:IsA("Decal") then
-            v.Transparency = 1
-        elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
-            v:Destroy()
-        end
-    end
-    settings().Rendering.QualityLevel = 1
-end
-
--- ANTI-KICK IDLE
-if _G.NEANDRO_Module167.SmartIdleAntiKick then
-    local vu = game:GetService("VirtualUser")
-    player.Idled:Connect(function()
-        vu:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-        wait(1)
-        vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-    end)
-end
-
--- AUTO COLETAR DROPS
-spawn(function()
-    while wait(0.5) do
-        if _G.NEANDRO_Module167.AutoCollectDrops then
-            for _, item in pairs(workspace:GetChildren()) do
-                if item:IsA("Tool") and item:FindFirstChild("Handle") then
-                    if (item.Position - player.Character.HumanoidRootPart.Position).Magnitude <= 100 then
-                        item.Handle.CFrame = player.Character.HumanoidRootPart.CFrame
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- AUTO RESPAWN
-player.CharacterAdded:Connect(function(char)
-    if _G.NEANDRO_Module167.AutoRespawn then
-        repeat wait() until char:FindFirstChild("Humanoid")
-        wait(1)
-        char:MoveTo(Vector3.new(0, 100, 0))
-    end
-end)
-
--- NAVEGAÇÃO PELO MAR - ATIVA FASTSWIM
-spawn(function()
-    while wait(1) do
-        if _G.NEANDRO_Module167.AutoFastSwim and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            player.Character.HumanoidRootPart.Velocity = Vector3.new(0, 0, -150)
-        end
-    end
-end)
-
--- GUI PARA MÓDULO 16.7
-local function CreateModule167GUI()
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "NEANDRO_Module167_GUI"
-    gui.Parent = player:WaitForChild("PlayerGui")
-    gui.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 330, 0, 450)
-    frame.Position = UDim2.new(0, 20, 0.4, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-    frame.Parent = gui
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 30)
-    title.Text = "Módulo 16.7 - Suporte Avançado"
-    title.Font = Enum.Font.GothamBold
-    title.TextColor3 = Color3.fromRGB(0, 200, 255)
-    title.BackgroundTransparency = 1
-    title.Parent = frame
-
-    local posY = 35
-    for key, _ in pairs(_G.NEANDRO_Module167) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -20, 0, 35)
-        btn.Position = UDim2.new(0, 10, 0, posY)
-        btn.Text = key .. ": OFF"
-        btn.Font = Enum.Font.SourceSans
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        btn.Parent = frame
-
-        local function update()
-            if _G.NEANDRO_Module167[key] then
-                btn.Text = key .. ": ON"
-                btn.BackgroundColor3 = Color3.fromRGB(20, 140, 20)
-            else
-                btn.Text = key .. ": OFF"
-                btn.BackgroundColor3 = Color3.fromRGB(90, 0, 0)
-            end
-        end
-
-        update()
-
-        btn.MouseButton1Click:Connect(function()
-            _G.NEANDRO_Module167[key] = not _G.NEANDRO_Module167[key]
-            update()
-            Notify(key .. (_G.NEANDRO_Module167[key] and " ativado" or " desativado"))
-        end)
-
-        posY = posY + 40
-    end
-end
-
-CreateModule167GUI()
-
--- FIM DO MÓDULO 16.7
--- Módulo 16.9 Fundido Final - NEANDRO HUB
--- Funções: Auto ativar/desativar Haki da Observação e Armamento
--- Interface: Botões ON/OFF com indicador colorido (verde/vermelho)
--- Compatível com os outros módulos, sem conflitos
-
-local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
-
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
--- Configurações iniciais do módulo
-local Module169Settings = {
-    AutoHakiArmamento = false,
-    AutoHakiObservacao = false,
-}
-
--- Notificações para o usuário
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Haki Control",
-        Text = text,
-        Duration = 3
-    })
-end
-
--- Função para ativar/desativar o Haki do Armamento
-local function toggleHakiArmamento(state)
-    -- exemplo básico de ativação, adapte conforme o código do seu jogo
-    if state then
-        -- ativa o Haki do Armamento
-        -- Exemplo: player.Character.Humanoid:FindFirstChild("HakiArmamento"):FireServer(true)
-    else
-        -- desativa o Haki do Armamento
-        -- Exemplo: player.Character.Humanoid:FindFirstChild("HakiArmamento"):FireServer(false)
-    end
-end
-
--- Função para ativar/desativar o Haki da Observação
-local function toggleHakiObservacao(state)
-    -- exemplo básico de ativação, adapte conforme o código do seu jogo
-    if state then
-        -- ativa o Haki da Observação
-        -- Exemplo: player.Character.Humanoid:FindFirstChild("HakiObservacao"):FireServer(true)
-    else
-        -- desativa o Haki da Observação
-        -- Exemplo: player.Character.Humanoid:FindFirstChild("HakiObservacao"):FireServer(false)
-    end
-end
-
--- Monitoramento contínuo para manter o Haki ativado se a opção estiver ativa
-spawn(function()
+-- Loop para detectar e pegar baú constantemente
+coroutine.wrap(function()
     while true do
-        if Module169Settings.AutoHakiArmamento then
-            toggleHakiArmamento(true)
+        wait(1)  -- Intervalo para procurar o baú
+
+        local chest = findChest()
+        if chest then
+            print("Baú da missão detectado! Indo coletar...")
+            moveToChestAndCollect(chest)
+            wait(3)  -- Espera para evitar coletar repetido
         end
-        if Module169Settings.AutoHakiObservacao then
-            toggleHakiObservacao(true)
-        end
-        wait(1)
     end
-end)
-
--- Interface gráfica do módulo
-local function CreateModule169GUI()
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_Module169_GUI"
-    screen.Parent = PlayerGui
-    screen.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 350, 0, 150)
-    frame.Position = UDim2.new(0.5, -175, 0.3, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 0
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 30)
-    title.Position = UDim2.new(0, 0, 0, 0)
-    title.BackgroundTransparency = 1
-    title.Text = "NEANDRO HUB - Haki Control"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 22
-    title.TextColor3 = Color3.fromRGB(0, 170, 255)
-    title.Parent = frame
-
-    local function createToggle(text, settingKey, posY)
-        local container = Instance.new("Frame")
-        container.Size = UDim2.new(1, -20, 0, 40)
-        container.Position = UDim2.new(0, 10, 0, posY)
-        container.BackgroundTransparency = 1
-        container.Parent = frame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.85, 0, 1, 0)
-        btn.Position = UDim2.new(0, 0, 0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 18
-        btn.Text = text .. ": OFF"
-        btn.Parent = container
-
-        local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.new(0, 30, 0, 30)
-        indicator.Position = UDim2.new(0.87, 0, 0.1, 0)
-        indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-        indicator.BorderSizePixel = 0
-        indicator.Parent = container
-
-        local function update()
-            if Module169Settings[settingKey] then
-                btn.Text = text .. ": ON"
-                btn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-                indicator.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-            else
-                btn.Text = text .. ": OFF"
-                btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-                indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-            end
-        end
-
-        update()
-
-        btn.MouseButton1Click:Connect(function()
-            Module169Settings[settingKey] = not Module169Settings[settingKey]
-            update()
-            notify(text .. (Module169Settings[settingKey] and " ativado" or " desativado"))
-
-            -- Ativa/desativa imediatamente ao clicar
-            if settingKey == "AutoHakiArmamento" then
-                toggleHakiArmamento(Module169Settings[settingKey])
-            elseif settingKey == "AutoHakiObservacao" then
-                toggleHakiObservacao(Module169Settings[settingKey])
-            end
-        end)
-    end
-
-    createToggle("Auto Haki do Armamento", "AutoHakiArmamento", 50)
-    createToggle("Auto Haki da Observação", "AutoHakiObservacao", 100)
-end
-
-CreateModule169GUI()
--- Módulo 17 - Gerenciamento Inteligente de Inventário - NEANDRO HUB
+end)()
+-- Módulo 9: Ataque sem cooldown e munição infinita
 
 local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
-local RunService = game:GetService("RunService")
+local lp = Players.LocalPlayer
 
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
+local function removeCooldownAndInfiniteAmmo()
+    local character = lp.Character
+    if not character then return end
 
-local Module17Settings = {
-    AutoOrganizeInventory = false,
-    AutoDiscardJunk = true,
-    AutoSellDuplicates = false,
-}
-
-local junkItems = { -- lista de itens inúteis para descartar automaticamente
-    ["Broken Sword"] = true,
-    ["Old Boot"] = true,
-    ["Rusty Helmet"] = true,
-    -- adicione outros conforme necessidade
-}
-
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Inventário",
-        Text = text,
-        Duration = 3
-    })
-end
-
-local function getInventoryItems()
-    -- Função simulada para obter itens do inventário
-    -- Substitua com a função correta do jogo
-    local inventory = {}
-    -- Exemplo:
-    -- for _, item in pairs(player.Backpack:GetChildren()) do
-    --    table.insert(inventory, item.Name)
-    -- end
-    return inventory
-end
-
-local function organizeInventory()
-    -- Exemplo de organização (simples)
-    -- Agrupa itens repetidos, ordena etc.
-    local inventory = getInventoryItems()
-    -- Sua lógica para organizar o inventário
-    -- Esta parte depende da estrutura do jogo, adapte conforme necessário
-    notify("Inventário organizado.")
-end
-
-local function discardJunk()
-    local inventory = getInventoryItems()
-    for _, itemName in ipairs(inventory) do
-        if junkItems[itemName] then
-            -- comando para descartar o item
-            -- Exemplo: player.Backpack:FindFirstChild(itemName):Destroy()
-            notify("Descartado item inútil: "..itemName)
-        end
-    end
-end
-
-local function sellDuplicates()
-    local inventory = getInventoryItems()
-    local counts = {}
-    for _, itemName in ipairs(inventory) do
-        counts[itemName] = (counts[itemName] or 0) + 1
+    -- Exemplo: remover cooldown — depende de como o cooldown é aplicado no jogo
+    -- Aqui assumimos que tem um valor IntValue ou BoolValue que controla cooldown, substitua conforme seu jogo
+    local cooldownValue = character:FindFirstChild("WandCooldown")
+    if cooldownValue then
+        cooldownValue.Value = 0 -- Zerando cooldown
     end
 
-    for itemName, count in pairs(counts) do
-        if count > 1 then
-            -- Teleportar para NPC vendedor e vender os duplicados
-            -- Adaptar conforme o NPC vendedor e função de venda do jogo
-            notify("Vendendo "..(count-1).." itens duplicados: "..itemName)
-            -- Aqui pode chamar função de teleporte + venda automática
-        end
-    end
-end
-
--- Loop que monitora e executa funções automáticas conforme opções ativadas
-RunService.Heartbeat:Connect(function()
-    if Module17Settings.AutoOrganizeInventory then
-        organizeInventory()
-    end
-
-    if Module17Settings.AutoDiscardJunk then
-        discardJunk()
-    end
-
-    if Module17Settings.AutoSellDuplicates then
-        sellDuplicates()
-    end
-end)
-
--- Interface gráfica
-local function CreateModule17GUI()
-    local screen = Instance.new("ScreenGui")
-    screen.Name = "NEANDRO_Module17_GUI"
-    screen.Parent = PlayerGui
-    screen.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 400, 0, 200)
-    frame.Position = UDim2.new(0.5, -200, 0.2, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 0
-    frame.Parent = screen
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 35)
-    title.Position = UDim2.new(0, 0, 0, 0)
-    title.BackgroundTransparency = 1
-    title.Text = "NEANDRO HUB - Inventário Inteligente"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 24
-    title.TextColor3 = Color3.fromRGB(0, 170, 255)
-    title.Parent = frame
-
-    local function createToggle(text, settingKey, posY)
-        local container = Instance.new("Frame")
-        container.Size = UDim2.new(1, -20, 0, 40)
-        container.Position = UDim2.new(0, 10, 0, posY)
-        container.BackgroundTransparency = 1
-        container.Parent = frame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.85, 0, 1, 0)
-        btn.Position = UDim2.new(0, 0, 0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 18
-        btn.Text = text .. ": OFF"
-        btn.Parent = container
-
-        local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.new(0, 30, 0, 30)
-        indicator.Position = UDim2.new(0.87, 0, 0.1, 0)
-        indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-        indicator.BorderSizePixel = 0
-        indicator.Parent = container
-
-        local function update()
-            if Module17Settings[settingKey] then
-                btn.Text = text .. ": ON"
-                btn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
-                indicator.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-            else
-                btn.Text = text .. ": OFF"
-                btn.BackgroundColor3 = Color3.fromRGB(0, 90, 160)
-                indicator.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-            end
+    -- Exemplo: munição infinita — dependendo de como a munição é controlada no jogo
+    local wand = character:FindFirstChild("Wand") or character:FindFirstChildWhichIsA("Tool")
+    if wand then
+        local ammo = wand:FindFirstChild("Ammo")
+        if ammo and ammo:IsA("IntValue") then
+            ammo.Value = math.huge -- munição infinita
         end
 
-        update()
-
-        btn.MouseButton1Click:Connect(function()
-            Module17Settings[settingKey] = not Module17Settings[settingKey]
-            update()
-            notify(text .. (Module17Settings[settingKey] and " ativado" or " desativado"))
-        end)
-    end
-
-    createToggle("Auto Organizar Inventário", "AutoOrganizeInventory", 50)
-    createToggle("Auto Descartar Itens Inúteis", "AutoDiscardJunk", 95)
-    createToggle("Auto Vender Duplicados", "AutoSellDuplicates", 140)
-end
-
-CreateModule17GUI()
--- NEANDRO HUB - Módulo 18 - Sistema de Aprendizado Inteligente
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
-local Module18Settings = {
-    EnableLearning = true,
-    AutoAdjustFarm = true,
-    ShowStats = true,
-}
-
-local LearnStats = {
-    FarmSuccess = 0,
-    Failures = 0,
-    BestFruit = "",
-    BestWeapon = "",
-    BestSea = "",
-    MostUsedSkill = "",
-    DamagePerSecond = 0,
-}
-
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Aprendizado Inteligente",
-        Text = text,
-        Duration = 3
-    })
-end
-
--- Simulação de aprendizado inteligente (os dados reais vêm do farm system)
-local function simulateLearning()
-    if not Module18Settings.EnableLearning then return end
-
-    -- Exemplo de lógica de aprendizado
-    LearnStats.FarmSuccess += math.random(5, 15)
-    LearnStats.Failures += math.random(0, 2)
-    LearnStats.DamagePerSecond = LearnStats.DamagePerSecond + math.random(20, 100)
-
-    -- Atualizar os melhores
-    LearnStats.BestFruit = "Dough"
-    LearnStats.BestWeapon = "Cursed Dual Katana"
-    LearnStats.MostUsedSkill = "Z"
-    LearnStats.BestSea = "Sea 3"
-
-    if Module18Settings.AutoAdjustFarm then
-        -- aqui ele ajustaria automaticamente as configurações de farm
-        -- trocar fruta, usar arma, alterar skills, mudar ilha
-        notify("Farm ajustado com base nos dados aprendidos!")
+        -- Caso munição seja um NumberValue ou similar, adaptamos aqui também
     end
 end
 
--- Loop de aprendizado
-RunService.Heartbeat:Connect(function()
-    simulateLearning()
-end)
--- NEANDRO HUB - Módulo 18 - Sistema de Aprendizado Inteligente
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
-local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-
-local Module18Settings = {
-    EnableLearning = true,
-    AutoAdjustFarm = true,
-    ShowStats = true,
-}
-
-local LearnStats = {
-    FarmSuccess = 0,
-    Failures = 0,
-    BestFruit = "",
-    BestWeapon = "",
-    BestSea = "",
-    MostUsedSkill = "",
-    DamagePerSecond = 0,
-}
-
-local function notify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - Aprendizado Inteligente",
-        Text = text,
-        Duration = 3
-    })
-end
-
--- Simulação de aprendizado inteligente (os dados reais vêm do farm system)
-local function simulateLearning()
-    if not Module18Settings.EnableLearning then return end
-
-    -- Exemplo de lógica de aprendizado
-    LearnStats.FarmSuccess += math.random(5, 15)
-    LearnStats.Failures += math.random(0, 2)
-    LearnStats.DamagePerSecond = LearnStats.DamagePerSecond + math.random(20, 100)
-
-    -- Atualizar os melhores
-    LearnStats.BestFruit = "Dough"
-    LearnStats.BestWeapon = "Cursed Dual Katana"
-    LearnStats.MostUsedSkill = "Z"
-    LearnStats.BestSea = "Sea 3"
-
-    if Module18Settings.AutoAdjustFarm then
-        -- aqui ele ajustaria automaticamente as configurações de farm
-        -- trocar fruta, usar arma, alterar skills, mudar ilha
-        notify("Farm ajustado com base nos dados aprendidos!")
-    end
-end
-
--- Loop de aprendizado
-RunService.Heartbeat:Connect(function()
-    simulateLearning()
-end)
--- NEANDRO HUB - Módulo 19 (Atualizado) - PvP Avançado + Aimbot + Seleção de Skills e Tipo de Ataque
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-
-local Module18Settings = {
-    Aimbot = false,
-    UseSkillZ = true,
-    UseSkillX = true,
-    UseSkillC = false,
-    UseSkillV = false,
-    UseSkillF = false,
-    UseSoco = true,
-    UseFruta = false,
-    UseArma = false,
-    UseEspada = false,
-    DelayBetweenAttacks = 1.25, -- segundos
-    Target = nil,
-}
-
-local function Notify(msg)
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "NEANDRO HUB - PvP",
-        Text = msg,
-        Duration = 3
-    })
-end
-
-local function CreatePvPUI()
-    local Screen = Instance.new("ScreenGui", PlayerGui)
-    Screen.Name = "PvP_Module18"
-    Screen.ResetOnSpawn = false
-
-    local Frame = Instance.new("Frame", Screen)
-    Frame.Size = UDim2.new(0, 440, 0, 560)
-    Frame.Position = UDim2.new(0.02, 0, 0.2, 0)
-    Frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-
-    local Title = Instance.new("TextLabel", Frame)
-    Title.Size = UDim2.new(1, 0, 0, 35)
-    Title.Text = "Módulo 18 - PvP Avançado e Aimbot"
-    Title.TextColor3 = Color3.fromRGB(0, 180, 255)
-    Title.BackgroundTransparency = 1
-    Title.Font = Enum.Font.SourceSansBold
-    Title.TextSize = 20
-
-    local y = 45
-    local function CreateToggle(text, key)
-        local btn = Instance.new("TextButton", Frame)
-        btn.Size = UDim2.new(0, 400, 0, 35)
-        btn.Position = UDim2.new(0, 20, 0, y)
-        btn.Text = text .. ": OFF"
-        btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        
-        local function Refresh()
-            btn.Text = text .. ": " .. (Module18Settings[key] and "ON" or "OFF")
-            btn.BackgroundColor3 = Module18Settings[key] and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(40, 40, 40)
-        end
-
-        btn.MouseButton1Click:Connect(function()
-            Module18Settings[key] = not Module18Settings[key]
-            Refresh()
-            Notify(text .. (Module18Settings[key] and " ativado" or " desativado"))
-        end)
-
-        Refresh()
-        y += 40
-    end
-
-    CreateToggle("Aimbot", "Aimbot")
-    CreateToggle("Skill Z", "UseSkillZ")
-    CreateToggle("Skill X", "UseSkillX")
-    CreateToggle("Skill C", "UseSkillC")
-    CreateToggle("Skill V", "UseSkillV")
-    CreateToggle("Skill F", "UseSkillF")
-    CreateToggle("Usar Soco", "UseSoco")
-    CreateToggle("Usar Fruta", "UseFruta")
-    CreateToggle("Usar Arma", "UseArma")
-    CreateToggle("Usar Espada", "UseEspada")
-end
-
-RunService.RenderStepped:Connect(function()
-    if Module18Settings.Aimbot and Module18Settings.Target then
-        local char = Module18Settings.Target.Character
-        if char and char:FindFirstChild("HumanoidRootPart") then
-            local pos = char.HumanoidRootPart.Position
-            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, pos)
-
-            if tick() - (Module18Settings._last or 0) >= Module18Settings.DelayBetweenAttacks then
-                Module18Settings._last = tick()
-
-                if Module18Settings.UseSkillZ then keypress(0x5A) wait(0.1) keyrelease(0x5A) end
-                if Module18Settings.UseSkillX then keypress(0x58) wait(0.1) keyrelease(0x58) end
-                if Module18Settings.UseSkillC then keypress(0x43) wait(0.1) keyrelease(0x43) end
-                if Module18Settings.UseSkillV then keypress(0x56) wait(0.1) keyrelease(0x56) end
-                if Module18Settings.UseSkillF then keypress(0x46) wait(0.1) keyrelease(0x46) end
-            end
-        end
-    end
-end)
-
-local function ListPlayers()
-    for i, p in pairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            local btn = Instance.new("TextButton", PlayerGui:WaitForChild("PvP_Module18").Frame)
-            btn.Size = UDim2.new(0, 400, 0, 30)
-            btn.Position = UDim2.new(0, 20, 0, 500 + (i * 35))
-            btn.Text = "Atacar: " .. p.Name
-            btn.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
-            btn.TextColor3 = Color3.new(1, 1, 1)
-
-            btn.MouseButton1Click:Connect(function()
-                Module18Settings.Target = p
-                Notify("Alvo: " .. p.Name)
-            end)
-        end
-    end
-end
-
-CreatePvPUI()
-wait(0.5)
-ListPlayers()
-
-return Module18Settings
--- NEANDRO HUB MODULO 20 (FINAL)        
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
-
-local player = Players.LocalPlayer
-local gui = player:WaitForChild("PlayerGui")
-
--- CONFIGS
-local NeandroStatus = {
-    PerformanceBoost = false,
-    Diagnostics = false,
-    GlobalShutdown = false,
-    AntiLagMode = false,
-    AutoReconnect = false,
-    AutoFPSUnlock = false
-}
-
--- UI
-local screen = Instance.new("ScreenGui", gui)
-screen.Name = "NEANDRO_Module20_GUI"
-
-local frame = Instance.new("Frame", screen)
-frame.Size = UDim2.new(0, 340, 0, 420)
-frame.Position = UDim2.new(0.03, 0, 0.2, 0)
-frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-frame.BorderSizePixel = 0
-
-local title = Instance.new("TextLabel", frame)
-title.Size = UDim2.new(1, 0, 0, 40)
-title.Text = "Módulo 20 - Centro de Comando"
-title.TextColor3 = Color3.fromRGB(255, 85, 0)
-title.TextScaled = true
-title.BackgroundTransparency = 1
-
-local function createButton(name, key, positionY)
-    local holder = Instance.new("Frame", frame)
-    holder.Size = UDim2.new(1, -20, 0, 40)
-    holder.Position = UDim2.new(0, 10, 0, positionY)
-    holder.BackgroundTransparency = 1
-
-    local btn = Instance.new("TextButton", holder)
-    btn.Size = UDim2.new(0.8, 0, 1, 0)
-    btn.Text = name .. ": OFF"
-    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    btn.TextColor3 = Color3.new(1, 1, 1)
-    btn.Font = Enum.Font.SourceSans
-    btn.TextScaled = true
-
-    local status = Instance.new("Frame", holder)
-    status.Size = UDim2.new(0, 30, 0, 30)
-    status.Position = UDim2.new(0.82, 0, 0.1, 0)
-    status.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-    status.BorderSizePixel = 0
-
-    local function toggle()
-        NeandroStatus[key] = not NeandroStatus[key]
-        btn.Text = name .. (NeandroStatus[key] and ": ON" or ": OFF")
-        status.BackgroundColor3 = NeandroStatus[key] and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
-        if key == "GlobalShutdown" and NeandroStatus[key] then
-            StarterGui:SetCore("SendNotification", {
-                Title = "NEANDRO HUB",
-                Text = "Desligamento global ativado. Todos os scripts serão pausados.",
-                Duration = 5
-            })
-        end
-    end
-
-    btn.MouseButton1Click:Connect(toggle)
-end
-
--- Botões
-local options = {
-    {"Modo Desempenho Turbo", "PerformanceBoost"},
-    {"Auto Diagnóstico", "Diagnostics"},
-    {"Desligar Todos Módulos", "GlobalShutdown"},
-    {"Anti Lag Automático", "AntiLagMode"},
-    {"Reconectar Automático", "AutoReconnect"},
-    {"Desbloqueador de FPS", "AutoFPSUnlock"}
-}
-
-for i, opt in ipairs(options) do
-    createButton(opt[1], opt[2], 40 + (i - 1) * 45)
-end
-
--- Execução Automática de Diagnóstico
-RunService.Heartbeat:Connect(function()
-    if NeandroStatus.Diagnostics then
-        -- Diagnóstico simples de FPS e Ping
-        local fps = math.floor(1 / RunService.RenderStepped:Wait())
-        local ping = math.random(50, 90) -- Simulação
-        if fps < 30 then
-            warn("FPS abaixo do ideal: ", fps)
-        end
-        if ping > 100 then
-            warn("Ping elevado: ", ping)
-        end
-    end
+-- Loop para aplicar sempre
+game:GetService("RunService").Stepped:Connect(function()
+    removeCooldownAndInfiniteAmmo()
 end)
